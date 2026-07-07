@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "od-design-system-project/v1",
+  "id": "ddato-drive",
+  "name": "DDATO Drive",
+  "category": "Product System",
+  "description": "A quiet, file-first system for a self-hosted web drive/NAS product.",
+  "source": {
+    "type": "project",
+    "origin": "hand-authored for ddato_drive"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css",
+    "components": "components.html"
+  },
+  "usage": "USAGE.md",
+  "preview": {
+    "dir": "preview",
+    "pages": [
+      "index.html"
+    ]
+  }
+}

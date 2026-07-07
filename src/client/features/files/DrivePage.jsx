@@ -1,0 +1,1060 @@
+import { ArrowLeft, ArrowUpDown, ChevronLeft, Columns3, Copy, Download, Edit3, FolderOpen, FolderPlus, GalleryHorizontalEnd, KeyRound, LayoutGrid, List as ListIcon, LockKeyhole, MoveRight, RefreshCcw, RotateCcw, Search, Share2, Square, SquareCheckBig, Trash2, UnlockKeyhole, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "../../shared/components/Button.jsx";
+import { EmptyState } from "../../shared/components/EmptyState.jsx";
+import { PasswordDialog } from "../../shared/components/PasswordDialog.jsx";
+import { ProgressBar } from "../../shared/components/ProgressBar.jsx";
+import { formatBytes, quotaPercent } from "../../shared/lib/formatBytes.js";
+import { adminApi } from "../admin/adminApi.js";
+import { useAuth } from "../auth/AuthProvider.jsx";
+import { Breadcrumbs } from "./components/Breadcrumbs.jsx";
+import { DriveContextMenu } from "./components/DriveContextMenu.jsx";
+import { FileList } from "./components/FileList.jsx";
+import { folderColorOptions } from "./components/FolderGlyph.jsx";
+import { MetadataPane } from "./components/MetadataPane.jsx";
+import { MoveDialog } from "./components/MoveDialog.jsx";
+import { PreviewPane } from "./components/PreviewPane.jsx";
+import { ShareDialog } from "./components/ShareDialog.jsx";
+import { UploadQueue } from "./components/UploadQueue.jsx";
+import { collectDroppedUploadEntries, hasDroppedFiles, uploadCollectedEntries } from "./dragDropUpload.js";
+import { sortFiles } from "./fileDisplay.js";
+import { filesApi } from "./filesApi.js";
+import { usePersistentUploadQueue } from "./usePersistentUploadQueue.js";
+
+const VIEW_STORAGE_KEY = "ddato_drive_view_mode";
+const SORT_FIELD_STORAGE_KEY = "ddato_drive_sort_field";
+const SORT_DIRECTION_STORAGE_KEY = "ddato_drive_sort_direction";
+const SIDE_PANEL_WIDTH_STORAGE_KEY = "ddato_drive_side_panel_width";
+const SIDE_PANEL_MIN_WIDTH = 300;
+const SIDE_PANEL_DEFAULT_WIDTH = 360;
+const SIDE_PANEL_MAX_WIDTH = 820;
+const INTERNAL_MOVE_TYPE = "application/x-ddato-drive-file-ids";
+const viewModes = [
+  { id: "icon", label: "아이콘 보기", icon: LayoutGrid },
+  { id: "list", label: "목록 보기", icon: ListIcon },
+  { id: "column", label: "컬럼 보기", icon: Columns3 },
+  { id: "gallery", label: "갤러리 보기", icon: GalleryHorizontalEnd }
+];
+const sortOptions = [
+  { id: "name", label: "이름" },
+  { id: "size", label: "용량" },
+  { id: "extension", label: "확장자" },
+  { id: "createdAt", label: "추가된 날짜" },
+  { id: "updatedAt", label: "수정된 날짜" },
+  { id: "kind", label: "종류" },
+  { id: "location", label: "위치" }
+];
+
+export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, homeSignal = 0, allowAdminPasswordReset = false }) {
+  const { user, refresh } = useAuth();
+  const inputRef = useRef(null);
+  const [folderStack, setFolderStack] = useState([]);
+  const [files, setFiles] = useState([]);
+  const [knownFiles, setKnownFiles] = useState(() => new Map());
+  const [owner, setOwner] = useState(null);
+  const [usageBytes, setUsageBytes] = useState(0);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [activeFileId, setActiveFileId] = useState("");
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [shareFiles, setShareFiles] = useState([]);
+  const [moveFiles, setMoveFiles] = useState([]);
+  const [passwordDialog, setPasswordDialog] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [dropTargetId, setDropTargetId] = useState("");
+  const [sidePanelCollapsed, setSidePanelCollapsed] = useState(true);
+  const dragDepthRef = useRef(0);
+  const currentDragIdsRef = useRef([]);
+  const selectionAnchorIdRef = useRef("");
+  const sidePanelWidthRef = useRef(SIDE_PANEL_DEFAULT_WIDTH);
+  const [sidePanelWidth, setSidePanelWidth] = useState(() => {
+    const saved = Number(window.localStorage.getItem(SIDE_PANEL_WIDTH_STORAGE_KEY));
+    return clampPanelWidth(Number.isFinite(saved) ? saved : SIDE_PANEL_DEFAULT_WIDTH);
+  });
+  const [sortField, setSortField] = useState(() => {
+    const saved = window.localStorage.getItem(SORT_FIELD_STORAGE_KEY);
+    return sortOptions.some((option) => option.id === saved) ? saved : "name";
+  });
+  const [sortDirection, setSortDirection] = useState(() => {
+    return window.localStorage.getItem(SORT_DIRECTION_STORAGE_KEY) === "desc" ? "desc" : "asc";
+  });
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    return viewModes.some((mode) => mode.id === saved) ? saved : "icon";
+  });
+  const uploadQueue = usePersistentUploadQueue({
+    accountId: user?.id || "",
+    enabled: !trashMode,
+    onComplete: async () => {
+      await loadFiles();
+    }
+  });
+
+  const parentId = folderStack.at(-1)?.id || null;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => loadFiles(), query.trim() ? 180 : 0);
+    return () => window.clearTimeout(timer);
+  }, [parentId, ownerId, query, trashMode]);
+
+  const filteredFiles = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    if (!trashMode || !search) return files;
+    return files.filter((file) => String(file.name || "").toLowerCase().includes(search));
+  }, [files, query, trashMode]);
+  const visibleFiles = useMemo(() => sortFiles(filteredFiles, sortField, sortDirection), [filteredFiles, sortField, sortDirection]);
+  const selectedFiles = useMemo(() => selectedIds.map((id) => knownFiles.get(id)).filter(Boolean), [knownFiles, selectedIds]);
+  const selectedFile = useMemo(() => knownFiles.get(activeFileId) || files.find((file) => file.id === activeFileId) || null, [files, knownFiles, activeFileId]);
+  const isSidePanelOpen = Boolean(selectedFile) && !sidePanelCollapsed;
+  const isSearching = Boolean(query.trim());
+  const allVisibleSelected = visibleFiles.length > 0 && visibleFiles.every((file) => selectedIds.includes(file.id));
+
+  useEffect(() => {
+    sidePanelWidthRef.current = sidePanelWidth;
+  }, [sidePanelWidth]);
+
+  useEffect(() => {
+    setSidePanelCollapsed(!selectedFile);
+  }, [selectedFile?.id]);
+
+	  useEffect(() => {
+	    if (trashMode) return;
+	    setFolderStack([]);
+	    setQuery("");
+	    setSelectedIds([]);
+	    setActiveFileId("");
+	    setSidePanelCollapsed(true);
+	  }, [homeSignal, trashMode]);
+
+  async function loadFiles() {
+    setBusy(true);
+    setError("");
+    try {
+      if (trashMode) {
+        const result = await filesApi.trash({ ownerId });
+	        rememberFiles(result.files);
+	        setFiles(result.files);
+	        setOwner(result.owner);
+	        setUsageBytes(result.usageBytes);
+	        await refresh();
+	        setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
+	        setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
+	        return;
+	      }
+
+      const search = query.trim();
+      const result = await filesApi.list({ parentId: search ? null : parentId, ownerId, search });
+	      rememberFiles(result.files);
+	      setFiles(result.files);
+	      setOwner(result.owner);
+	      setUsageBytes(result.usageBytes);
+	      await refresh();
+	      setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
+	      setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
+	    } catch (nextError) {
+      setError(nextError.message || "파일 목록을 불러오지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openFolder(file) {
+    if (trashMode) return;
+    rememberFiles([file]);
+    const nextStack = Array.isArray(file.path) && file.path.length
+      ? file.path
+      : [...folderStack, { id: file.id, name: file.name }];
+	    setFolderStack(nextStack);
+	    setSelectedIds([]);
+	    setActiveFileId("");
+	    setQuery("");
+	  }
+
+  async function createFolder() {
+    if (trashMode) return;
+    if (!(await ensureCurrentFolderUnlocked("새 폴더 만들기"))) return;
+    const name = window.prompt("새 폴더 이름", "새 폴더");
+    if (!name) return;
+    await runAction(() => filesApi.createFolder({ name, parentId, ownerId }));
+  }
+
+  async function renameSelected() {
+    if (trashMode) return;
+    if (selectedFiles.length !== 1) return;
+    const selectedFile = selectedFiles[0];
+    if (!(await unlockFileForAction(selectedFile, "이름 변경"))) return;
+    const name = window.prompt("새 이름", selectedFile.name);
+    if (!name || name === selectedFile.name) return;
+    await runAction(() => filesApi.rename(selectedFile.id, name));
+  }
+
+  async function changeFolderColor(file, color) {
+    if (trashMode || !file || file.type !== "folder") return;
+    if (!(await unlockFileForAction(file, "색상 변경"))) return;
+    await runAction(async () => {
+      const result = await filesApi.setFolderColor(file.id, color);
+      rememberFiles([result.file]);
+    });
+  }
+
+  async function duplicateSelected(targets = selectedFiles) {
+    if (trashMode) return;
+    const items = targets.filter(Boolean);
+    if (!items.length) return;
+    if (!(await ensureFilesUnlocked(items, "복제"))) return;
+    await runAction(async () => {
+      for (const item of items) {
+        const result = await filesApi.duplicate(item.id);
+        rememberFiles([result.root]);
+      }
+    });
+  }
+
+  async function deleteSelected(targets = selectedFiles) {
+    if (trashMode) {
+      await purgeSelected(targets);
+      return;
+    }
+    const items = targets.filter(Boolean);
+    if (!items.length) return;
+    if (!(await ensureFilesUnlocked(items, "삭제"))) return;
+    const label = items.length === 1 ? `${items[0].name}을 삭제할까요?` : `${items.length}개 항목을 삭제할까요?`;
+    if (!window.confirm(label)) return;
+    await runAction(async () => {
+      for (const item of items) {
+        await filesApi.remove(item.id);
+      }
+	    });
+	    setSelectedIds([]);
+	    setActiveFileId((id) => items.some((item) => item.id === id) ? "" : id);
+	  }
+
+  async function restoreSelected(targets = selectedFiles) {
+    const items = targets.filter(Boolean);
+    if (!items.length) return;
+    await runAction(async () => {
+      for (const item of items) {
+        await filesApi.restore(item.id);
+      }
+	    });
+	    setSelectedIds([]);
+	    setActiveFileId((id) => items.some((item) => item.id === id) ? "" : id);
+	  }
+
+  async function purgeSelected(targets = selectedFiles) {
+    const items = targets.filter(Boolean);
+    if (!items.length) return;
+    const label = items.length === 1 ? `${items[0].name}을 영구 삭제할까요?` : `${items.length}개 항목을 영구 삭제할까요?`;
+    if (!window.confirm(label)) return;
+    await runAction(async () => {
+      for (const item of items) {
+        await filesApi.purge(item.id);
+      }
+	    });
+	    setSelectedIds([]);
+	    setActiveFileId((id) => items.some((item) => item.id === id) ? "" : id);
+	  }
+
+  async function runAction(action) {
+    setError("");
+    try {
+      await action();
+      await loadFiles();
+    } catch (nextError) {
+      setError(nextError.message || "작업을 완료하지 못했습니다.");
+    }
+  }
+
+  function rememberFiles(nextFiles = []) {
+    if (!nextFiles.length) return;
+    setKnownFiles((current) => {
+      const next = new Map(current);
+      for (const file of nextFiles) {
+        if (file?.id) next.set(file.id, file);
+      }
+      return next;
+    });
+  }
+
+  async function handleUpload(event) {
+    if (trashMode) return;
+    const selected = [...event.target.files];
+    event.target.value = "";
+    if (!selected.length) return;
+    if (!(await ensureCurrentFolderUnlocked("업로드"))) return;
+
+    for (const file of selected) {
+      await uploadQueue.enqueueUpload({ file, parentId, ownerId, name: file.name, displayName: file.name });
+    }
+  }
+
+  function handleDragEnter(event) {
+    if (trashMode) return;
+    if (hasInternalMove(event.dataTransfer)) return;
+    if (!hasDroppedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  }
+
+  function handleDragOver(event) {
+    if (trashMode) return;
+    if (hasInternalMove(event.dataTransfer)) return;
+    if (!hasDroppedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDragLeave(event) {
+    if (trashMode) return;
+    if (hasInternalMove(event.dataTransfer)) return;
+    if (!hasDroppedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragActive(false);
+  }
+
+  async function handleDrop(event) {
+    if (trashMode) return;
+    if (hasInternalMove(event.dataTransfer)) {
+      event.preventDefault();
+      event.stopPropagation();
+      setDropTargetId("");
+      return;
+    }
+    if (!hasDroppedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = 0;
+    setDragActive(false);
+    closeContextMenu();
+    setError("");
+
+    try {
+      if (!(await ensureCurrentFolderUnlocked("업로드"))) return;
+      const entries = await collectDroppedUploadEntries(event.dataTransfer);
+      if (!entries.files.length && !entries.directories.length) {
+        setError("업로드할 파일이나 폴더를 찾지 못했습니다.");
+        return;
+      }
+
+      await uploadCollectedEntries({
+        entries,
+        rootParentId: parentId,
+        ownerId,
+        createFolder: filesApi.createFolder,
+        uploadFile: uploadQueue.enqueueUpload,
+        onQueueAdd: uploadQueue.addTransientUpload,
+        onQueueUpdate: uploadQueue.updateTransientUpload
+      });
+      await loadFiles();
+    } catch (nextError) {
+      setError(nextError.message || "드롭한 항목을 업로드하지 못했습니다.");
+      await loadFiles();
+    }
+  }
+
+	  async function downloadSelected() {
+	    if (trashMode) {
+	      setError("휴지통 항목은 복원한 뒤 다운로드할 수 있습니다.");
+	      return;
+	    }
+	    await downloadFiles(selectedFiles);
+	  }
+
+	  async function downloadActiveFile() {
+	    if (!selectedFile) return;
+	    await downloadFiles([selectedFile]);
+	  }
+
+  async function downloadFiles(targets) {
+    if (trashMode) {
+      setError("휴지통 항목은 복원한 뒤 다운로드할 수 있습니다.");
+      return;
+    }
+    const itemsToDownload = targets.filter(Boolean);
+    if (!itemsToDownload.length) {
+      setError("다운로드할 항목을 선택하세요.");
+      return;
+    }
+    setError("");
+    if (!(await ensureFilesUnlocked(itemsToDownload, "다운로드"))) return;
+    for (const item of itemsToDownload) {
+      window.open(filesApi.downloadUrl(item.id), "_blank", "noopener,noreferrer");
+    }
+  }
+
+  async function openShareDialog(targets) {
+    if (trashMode) {
+      setError("휴지통 항목은 복원한 뒤 공유할 수 있습니다.");
+      return;
+    }
+    const itemsToShare = targets.filter(Boolean);
+    if (!itemsToShare.length) {
+      setError("공유할 항목을 선택하세요.");
+      return;
+    }
+    setError("");
+    if (!(await ensureFilesUnlocked(itemsToShare, "공유"))) return;
+    setShareFiles(itemsToShare);
+  }
+
+  async function ensureFilesUnlocked(items, actionLabel) {
+    for (const item of items) {
+      if (!(await unlockFileForAction(item, actionLabel))) return false;
+    }
+    return true;
+  }
+
+  async function ensureCurrentFolderUnlocked(actionLabel) {
+    if (!parentId) return true;
+    const folder = knownFiles.get(parentId);
+    if (!folder) return true;
+    return unlockFileForAction(folder, actionLabel);
+  }
+
+  async function unlockFileForAction(file, actionLabel = "작업") {
+    if (!file?.passwordProtected || file.passwordUnlocked) return true;
+    const password = await requestPassword({
+      title: "암호 입력",
+      body: `${file.name} 항목을 ${actionLabel}하려면 암호가 필요합니다.`,
+      confirmLabel: "잠금 해제"
+    });
+    if (!password) return false;
+
+    try {
+      const result = await filesApi.unlock(file.id, password);
+      rememberFiles([result.file]);
+      return true;
+    } catch (nextError) {
+      setError(nextError.message || "암호를 확인하지 못했습니다.");
+      return false;
+    }
+  }
+
+  async function setPasswordForFiles(targets) {
+    const items = targets.filter(Boolean);
+    if (!items.length) return;
+    const protectedItems = items.filter((item) => item.ownPasswordProtected && !item.passwordUnlocked);
+    if (protectedItems.length && !(await ensureFilesUnlocked(protectedItems, "암호 변경"))) return;
+    const password = await requestPassword({
+      title: items.length === 1 ? "암호 설정" : "선택 항목 암호 설정",
+      body: items.length === 1 ? `${items[0].name}에 사용할 암호를 입력하세요.` : `${items.length}개 항목에 같은 암호를 설정합니다.`,
+      confirmLabel: "암호 설정"
+    });
+    if (!password) return;
+
+    await runAction(async () => {
+      for (const item of items) {
+        const result = await filesApi.setPassword(item.id, password);
+        rememberFiles([result.file]);
+      }
+    });
+  }
+
+  async function clearPasswordForFiles(targets) {
+    const items = targets.filter((item) => item?.ownPasswordProtected);
+    if (!items.length) {
+      setError("해제할 암호가 설정된 항목을 선택하세요.");
+      return;
+    }
+    const password = await requestPassword({
+      title: items.length === 1 ? "암호 해제" : "선택 항목 암호 해제",
+      body: items.length === 1 ? `${items[0].name}의 암호를 해제하려면 현재 암호를 입력하세요.` : `${items.length}개 항목의 암호를 해제합니다. 같은 암호가 설정된 항목만 해제됩니다.`,
+      confirmLabel: "암호 해제"
+    });
+    if (!password) return;
+
+    await runAction(async () => {
+      for (const item of items) {
+        const result = await filesApi.clearPassword(item.id, password);
+        rememberFiles([result.file]);
+      }
+    });
+  }
+
+  async function resetPasswordForFiles(targets) {
+    if (!allowAdminPasswordReset) return;
+    const items = targets.filter((item) => item?.ownPasswordProtected);
+    if (!items.length) {
+      setError("초기화할 2차 암호가 설정된 항목을 선택하세요.");
+      return;
+    }
+    const label = items.length === 1 ? `${items[0].name}의 2차 암호를 초기화할까요?` : `${items.length}개 항목의 2차 암호를 초기화할까요?`;
+    if (!window.confirm(`${label}\n초기화하면 암호 없이 미리보기, 다운로드, 공유, 삭제가 가능해집니다.`)) return;
+
+    await runAction(async () => {
+      for (const item of items) {
+        const result = await adminApi.resetFilePassword(item.id);
+        rememberFiles([result.file]);
+      }
+    });
+  }
+
+  function requestPassword(options) {
+    return new Promise((resolve) => {
+      setPasswordDialog({ ...options, resolve });
+    });
+  }
+
+  function submitPasswordDialog(password) {
+    const resolve = passwordDialog?.resolve;
+    setPasswordDialog(null);
+    resolve?.(password);
+  }
+
+  function closePasswordDialog() {
+    const resolve = passwordDialog?.resolve;
+    setPasswordDialog(null);
+    resolve?.("");
+  }
+
+  async function openMoveDialog(targets) {
+    if (trashMode) {
+      setError("휴지통 항목은 복원한 뒤 이동할 수 있습니다.");
+      return;
+    }
+    const itemsToMove = targets.filter(Boolean);
+    if (!itemsToMove.length) {
+      setError("이동할 항목을 선택하세요.");
+      return;
+    }
+    setError("");
+    if (!(await ensureFilesUnlocked(itemsToMove, "이동"))) return;
+    setMoveFiles(itemsToMove);
+  }
+
+  async function moveItems(targets, destinationParentId) {
+    if (trashMode) {
+      setError("휴지통 항목은 복원한 뒤 이동할 수 있습니다.");
+      return false;
+    }
+
+    const items = targets.filter(Boolean);
+    if (!items.length) {
+      setError("이동할 항목을 선택하세요.");
+      return false;
+    }
+
+    if (!(await ensureFilesUnlocked(items, "이동"))) return false;
+
+    const movedIds = new Set(items.map((item) => item.id));
+    setBusy(true);
+    setError("");
+    try {
+      for (const item of items) {
+        const result = await filesApi.move(item.id, destinationParentId);
+        rememberFiles([result.file]);
+      }
+      await loadFiles();
+      setSelectedIds((ids) => ids.filter((id) => !movedIds.has(id)));
+      setActiveFileId((id) => movedIds.has(id) ? "" : id);
+      setMoveFiles([]);
+      setDropTargetId("");
+      return true;
+    } catch (nextError) {
+      setError(nextError.message || "항목을 이동하지 못했습니다.");
+      setDropTargetId("");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleItemDragStart(event, file) {
+    if (trashMode) {
+      event.preventDefault();
+      return;
+    }
+    const items = selectedIds.includes(file.id) && selectedFiles.length ? selectedFiles : [file];
+    const ids = items.map((item) => item.id).filter(Boolean);
+    if (!ids.length) {
+      event.preventDefault();
+      return;
+    }
+
+    currentDragIdsRef.current = ids;
+    rememberFiles(items);
+    closeContextMenu();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(INTERNAL_MOVE_TYPE, JSON.stringify(ids));
+    event.dataTransfer.setData("text/plain", items.map((item) => item.name).join(", "));
+  }
+
+  function handleItemDragEnd() {
+    currentDragIdsRef.current = [];
+    setDropTargetId("");
+  }
+
+  function handleItemDragOverFolder(event, target) {
+    if (trashMode || target.type !== "folder" || !hasInternalMove(event.dataTransfer)) return;
+    if (currentDragIdsRef.current.includes(target.id)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetId(target.id);
+  }
+
+  function handleItemDragLeaveFolder(event, target) {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setDropTargetId((id) => id === target.id ? "" : id);
+  }
+
+  async function handleItemDropOnFolder(event, target) {
+    if (trashMode || target.type !== "folder" || !hasInternalMove(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const ids = readInternalMoveIds(event.dataTransfer, currentDragIdsRef.current);
+    currentDragIdsRef.current = [];
+    setDropTargetId("");
+    if (!ids.length || ids.includes(target.id)) return;
+    const items = ids.map((id) => knownFiles.get(id) || visibleFiles.find((file) => file.id === id)).filter(Boolean);
+    if (!items.length) return;
+    await moveItems(items, target.id);
+  }
+
+  function changeViewMode(nextMode) {
+    setViewMode(nextMode);
+    window.localStorage.setItem(VIEW_STORAGE_KEY, nextMode);
+  }
+
+  function changeSortField(nextField) {
+    setSortField(nextField);
+    window.localStorage.setItem(SORT_FIELD_STORAGE_KEY, nextField);
+  }
+
+  function toggleSortDirection() {
+    const nextDirection = sortDirection === "asc" ? "desc" : "asc";
+    setSortDirection(nextDirection);
+    window.localStorage.setItem(SORT_DIRECTION_STORAGE_KEY, nextDirection);
+  }
+
+	  function selectFile(file, event = null) {
+	    event?.preventDefault();
+	    rememberFiles([file]);
+	    selectionAnchorIdRef.current = file.id;
+	    setActiveFileId(file.id);
+	    setSidePanelCollapsed(false);
+	  }
+
+  function toggleFileSelection(file) {
+    rememberFiles([file]);
+    selectionAnchorIdRef.current = file.id;
+    setSelectedIds((ids) => ids.includes(file.id) ? ids.filter((id) => id !== file.id) : [...ids, file.id]);
+  }
+
+  function toggleSelectAllVisible() {
+    if (!visibleFiles.length) return;
+    if (allVisibleSelected) {
+      const visibleIds = new Set(visibleFiles.map((file) => file.id));
+      setSelectedIds((ids) => ids.filter((id) => !visibleIds.has(id)));
+      selectionAnchorIdRef.current = "";
+      return;
+    }
+
+    selectionAnchorIdRef.current = visibleFiles[0].id;
+    rememberFiles(visibleFiles);
+    setSelectedIds(visibleFiles.map((file) => file.id));
+  }
+
+	  function handleDriveKeyDown(event) {
+	    if (event.target.closest("input, textarea, select, button")) return;
+	    if (!visibleFiles.length) return;
+
+	    if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
+	      event.preventDefault();
+	      const direction = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
+	      const activeIndex = visibleFiles.findIndex((file) => file.id === selectedFile?.id);
+	      const currentIndex = activeIndex >= 0 ? activeIndex : direction > 0 ? -1 : visibleFiles.length;
+	      const nextIndex = Math.max(0, Math.min(visibleFiles.length - 1, currentIndex + direction));
+	      const nextFile = visibleFiles[nextIndex];
+	      selectionAnchorIdRef.current = nextFile.id;
+	      setActiveFileId(nextFile.id);
+	      setSidePanelCollapsed(false);
+	      focusFileItem(nextFile.id);
+	      return;
+	    }
+
+    if (event.key === "Enter" && selectedFile) {
+      event.preventDefault();
+      if (!trashMode && selectedFile.type === "folder") openFolder(selectedFile);
+      return;
+    }
+
+    if (event.key === " " && selectedFile) {
+      event.preventDefault();
+      setSidePanelCollapsed(false);
+      return;
+    }
+
+    if ((event.key === "Delete" || event.key === "Backspace") && selectedFiles.length) {
+      event.preventDefault();
+      deleteSelected();
+    }
+  }
+
+  function focusFileItem(fileId) {
+    window.requestAnimationFrame(() => {
+      const item = Array.from(document.querySelectorAll("[data-file-id]")).find((element) => element.dataset.fileId === fileId);
+      item?.focus();
+    });
+  }
+
+  function startSidePanelResize(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handlePointerMove = (moveEvent) => {
+      const nextWidth = clampPanelWidth(window.innerWidth - moveEvent.clientX);
+      sidePanelWidthRef.current = nextWidth;
+      setSidePanelWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      window.localStorage.setItem(SIDE_PANEL_WIDTH_STORAGE_KEY, String(sidePanelWidthRef.current));
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+  }
+
+  function getContextSelection(file) {
+    if (!file) return selectedFiles;
+    return selectedIds.includes(file.id) ? selectedFiles : [file];
+  }
+
+	  function openItemContextMenu(event, file) {
+	    event.preventDefault();
+	    event.stopPropagation();
+	    rememberFiles([file]);
+	    setActiveFileId(file.id);
+	    setContextMenu(buildContextMenu(event.clientX, event.clientY, file));
+	  }
+
+  function openBlankContextMenu(event) {
+    event.preventDefault();
+    setContextMenu(buildContextMenu(event.clientX, event.clientY, null));
+  }
+
+  function closeContextMenu() {
+    setContextMenu(null);
+  }
+
+	  function goBack() {
+	    setFolderStack((stack) => stack.slice(0, -1));
+	    setSelectedIds([]);
+	    setActiveFileId("");
+	  }
+
+  function buildContextMenu(clientX, clientY, file) {
+    const x = Math.max(8, Math.min(clientX, window.innerWidth - 228));
+    const y = Math.max(8, Math.min(clientY, window.innerHeight - 360));
+    const selection = getContextSelection(file);
+    const hasSelection = selection.length > 0;
+    const single = selection.length === 1 ? selection[0] : null;
+
+    const run = (action) => () => {
+      closeContextMenu();
+      action();
+    };
+
+    if (!file) {
+      return {
+        x,
+        y,
+        items: trashMode ? [
+          { id: "select-all", label: allVisibleSelected ? "선택 해제" : "전체 선택", icon: allVisibleSelected ? Square : SquareCheckBig, disabled: !visibleFiles.length, onClick: run(toggleSelectAllVisible) },
+          { id: "refresh", label: "새로고침", icon: RefreshCcw, onClick: run(loadFiles) }
+        ] : [
+          { id: "select-all", label: allVisibleSelected ? "선택 해제" : "전체 선택", icon: allVisibleSelected ? Square : SquareCheckBig, disabled: !visibleFiles.length, onClick: run(toggleSelectAllVisible) },
+          { id: "new-folder", label: "새 폴더", icon: FolderPlus, onClick: run(createFolder) },
+          { id: "upload", label: "업로드", icon: Upload, onClick: run(() => inputRef.current?.click()) },
+          { id: "back", label: "뒤로가기", icon: ArrowLeft, disabled: !folderStack.length, onClick: run(goBack) },
+          { id: "refresh", label: "새로고침", icon: RefreshCcw, onClick: run(loadFiles) }
+        ]
+      };
+    }
+
+    if (trashMode) {
+      return {
+        x,
+        y,
+        items: [
+          { id: "restore", label: "복원", icon: RotateCcw, disabled: !hasSelection, onClick: run(() => restoreSelected(selection)) },
+          { id: "delete", label: "영구 삭제", icon: Trash2, disabled: !hasSelection, onClick: run(() => purgeSelected(selection)) }
+        ]
+      };
+    }
+
+    return {
+      x,
+      y,
+      items: [
+        { id: "open", label: "열기", icon: FolderOpen, disabled: !single || single.type !== "folder", onClick: run(() => openFolder(single)) },
+        { id: "download", label: "다운로드", icon: Download, disabled: !hasSelection, onClick: run(() => downloadFiles(selection)) },
+        { id: "share", label: "공유", icon: Share2, disabled: !hasSelection, onClick: run(() => openShareDialog(selection)) },
+        { id: "duplicate", label: "복제", icon: Copy, disabled: !hasSelection, onClick: run(() => duplicateSelected(selection)) },
+        { id: "move", label: "이동...", icon: MoveRight, disabled: !hasSelection, onClick: run(() => openMoveDialog(selection)) },
+        { id: "unlock", label: "암호 입력", icon: UnlockKeyhole, disabled: !selection.some((item) => item.passwordProtected && !item.passwordUnlocked), onClick: run(() => unlockFileForAction(selection.find((item) => item.passwordProtected && !item.passwordUnlocked), "열람")) },
+        { id: "sep-1", separator: true },
+        { id: "set-password", label: selection.some((item) => item.ownPasswordProtected) ? "암호 변경" : "암호 설정", icon: LockKeyhole, disabled: !hasSelection, onClick: run(() => setPasswordForFiles(selection)) },
+        { id: "clear-password", label: "암호 해제", icon: UnlockKeyhole, disabled: !selection.some((item) => item.ownPasswordProtected), onClick: run(() => clearPasswordForFiles(selection)) },
+        ...(allowAdminPasswordReset ? [
+          { id: "admin-reset-password", label: "2차 암호 초기화", icon: KeyRound, disabled: !selection.some((item) => item.ownPasswordProtected), onClick: run(() => resetPasswordForFiles(selection)) }
+        ] : []),
+        { id: "sep-password", separator: true },
+        { id: "rename", label: "이름 변경", icon: Edit3, disabled: selection.length !== 1, onClick: run(() => renameFile(selection[0])) },
+        ...(single?.type === "folder" ? [
+          {
+            id: "folder-color",
+            label: "색상 변경",
+            palette: folderColorOptions.map((option) => ({
+              ...option,
+              active: (single.folderColor || "yellow") === option.id
+            })),
+            onSelect: (color) => {
+              closeContextMenu();
+              changeFolderColor(single, color);
+            }
+          },
+          { id: "sep-2", separator: true }
+        ] : []),
+        { id: "delete", label: "삭제", icon: Trash2, onClick: run(() => deleteSelected(selection)) }
+      ]
+    };
+  }
+
+  async function renameFile(file) {
+    if (!file) return;
+    if (!(await unlockFileForAction(file, "이름 변경"))) return;
+    const name = window.prompt("새 이름", file.name);
+    if (!name || name === file.name) return;
+    await runAction(() => filesApi.rename(file.id, name));
+  }
+
+  const quotaUser = owner || user;
+  const percent = quotaPercent(usageBytes, quotaUser?.quotaBytes);
+  const SelectToggleIcon = allVisibleSelected ? Square : SquareCheckBig;
+
+  return (
+    <div
+      className={isSidePanelOpen ? "drive-layout" : "drive-layout side-panel-collapsed"}
+      style={isSidePanelOpen ? { "--drive-side-panel-width": `${sidePanelWidth}px` } : undefined}
+    >
+      <section className="drive-main">
+        <div className="drive-toolbar">
+          <input ref={inputRef} type="file" multiple hidden onChange={handleUpload} />
+          <Button icon={SelectToggleIcon} iconOnly onClick={toggleSelectAllVisible} disabled={!visibleFiles.length}>{allVisibleSelected ? "선택 해제" : "전체 선택"}</Button>
+          {trashMode ? (
+            <>
+              <Button icon={RotateCcw} iconOnly variant="primary" onClick={() => restoreSelected()} disabled={!selectedFiles.length}>복원</Button>
+              <Button icon={Trash2} iconOnly variant="danger" onClick={() => purgeSelected()} disabled={!selectedFiles.length}>영구 삭제</Button>
+            </>
+          ) : (
+            <>
+              <Button icon={Upload} iconOnly variant="primary" onClick={() => inputRef.current?.click()}>업로드</Button>
+              <Button icon={FolderPlus} iconOnly onClick={createFolder}>새 폴더</Button>
+              <Button icon={Download} iconOnly onClick={downloadSelected} disabled={!selectedFiles.length}>다운로드</Button>
+              <Button icon={Share2} iconOnly onClick={() => openShareDialog(selectedFiles)} disabled={!selectedFiles.length}>공유</Button>
+              <Button icon={MoveRight} iconOnly onClick={() => openMoveDialog(selectedFiles)} disabled={!selectedFiles.length}>이동</Button>
+              <Button icon={LockKeyhole} iconOnly onClick={() => setPasswordForFiles(selectedFiles)} disabled={!selectedFiles.length}>암호 설정</Button>
+              {allowAdminPasswordReset ? (
+                <Button icon={KeyRound} iconOnly onClick={() => resetPasswordForFiles(selectedFiles)} disabled={!selectedFiles.some((file) => file.ownPasswordProtected)}>2차 암호 초기화</Button>
+              ) : null}
+              <Button icon={Edit3} iconOnly onClick={renameSelected} disabled={selectedFiles.length !== 1}>이름 변경</Button>
+              <Button icon={Trash2} iconOnly variant="danger" onClick={() => deleteSelected()} disabled={!selectedFiles.length}>삭제</Button>
+            </>
+          )}
+          <div className="view-switcher" role="group" aria-label="보기 방식">
+            {viewModes.map((mode) => {
+              const Icon = mode.icon;
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className={viewMode === mode.id ? "view-option active" : "view-option"}
+                  title={mode.label}
+                  aria-label={mode.label}
+                  aria-pressed={viewMode === mode.id}
+                  onClick={() => changeViewMode(mode.id)}
+                >
+                  <Icon size={17} />
+                </button>
+              );
+            })}
+          </div>
+          <span className="toolbar-spacer" />
+          <label className="search-box">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="파일, 폴더 검색" />
+          </label>
+          {isSearching ? <span className="search-scope-label">{visibleFiles.length}개 결과</span> : null}
+          <label className="sort-box" aria-label="정렬 기준">
+            <span>정렬</span>
+            <select value={sortField} onChange={(event) => changeSortField(event.target.value)}>
+              {sortOptions.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <button className="sort-direction-button" type="button" onClick={toggleSortDirection} aria-label="정렬 방향 변경">
+            <ArrowUpDown size={16} />
+            <span>{sortDirection === "asc" ? "오름차순" : "내림차순"}</span>
+          </button>
+          <Button icon={RefreshCcw} iconOnly onClick={loadFiles} disabled={busy}>새로고침</Button>
+        </div>
+
+        <Breadcrumbs stack={trashMode ? [] : folderStack} onNavigate={(index) => {
+          if (trashMode) return;
+          setFolderStack(index < 0 ? [] : folderStack.slice(0, index + 1));
+        }} label={ownerLabel || (trashMode ? "휴지통" : "")} />
+
+        {error ? <div className="error-banner page-error">{error}</div> : null}
+
+        <div
+          className={dragActive ? "drive-content drag-active" : "drive-content"}
+          onContextMenu={openBlankContextMenu}
+          onClick={closeContextMenu}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onKeyDown={handleDriveKeyDown}
+          tabIndex={0}
+        >
+          {dragActive ? (
+            <div className="drop-overlay" aria-hidden="true">
+              <Upload size={30} />
+              <strong>파일 또는 폴더 놓기</strong>
+              <span>현재 위치에 업로드됩니다</span>
+            </div>
+          ) : null}
+          {visibleFiles.length ? (
+            <FileList
+              files={visibleFiles}
+              selectedIds={selectedIds}
+              selectedId={activeFileId}
+              activeFile={selectedFile}
+              onSelect={selectFile}
+              onToggleSelect={toggleFileSelection}
+              onOpenFolder={trashMode ? () => {} : openFolder}
+              onContextMenu={openItemContextMenu}
+              viewMode={viewMode}
+              ownerId={ownerId}
+              canBrowseColumns={!trashMode && !isSearching}
+              showLocation={isSearching}
+              sortField={sortField}
+              sortDirection={sortDirection}
+              onFilesSeen={rememberFiles}
+              canMove={!trashMode}
+              dropTargetId={dropTargetId}
+              onDragStart={handleItemDragStart}
+              onDragEnd={handleItemDragEnd}
+              onDragOverFolder={handleItemDragOverFolder}
+              onDragLeaveFolder={handleItemDragLeaveFolder}
+              onDropOnFolder={handleItemDropOnFolder}
+              onUnlock={unlockFileForAction}
+            />
+          ) : (
+            <EmptyState
+              title={trashMode ? "휴지통이 비어 있습니다" : "파일이 없습니다"}
+              body={trashMode ? "삭제한 항목이 이곳에 표시됩니다." : "업로드하거나 새 폴더를 만들어 시작하세요."}
+              action={trashMode ? null : <Button icon={Upload} onClick={() => inputRef.current?.click()}>파일 선택</Button>}
+            />
+          )}
+        </div>
+      </section>
+
+      {isSidePanelOpen ? (
+        <aside className="side-panel">
+          <button className="side-panel-resize-handle" type="button" aria-label="패널 너비 조절" onPointerDown={startSidePanelResize} />
+          {viewMode === "gallery" || viewMode === "column" || trashMode ? (
+	            <MetadataPane
+	              file={selectedFile}
+	              onClose={() => setActiveFileId("")}
+	              onCollapse={() => setSidePanelCollapsed(true)}
+	              onDownload={downloadActiveFile}
+	              onOpenFolder={openFolder}
+	              downloadDisabled={trashMode}
+	              openFolderDisabled={trashMode}
+            />
+          ) : (
+	            <PreviewPane
+	              file={selectedFile}
+	              onClose={() => setActiveFileId("")}
+	              onCollapse={() => setSidePanelCollapsed(true)}
+	              onDownload={downloadActiveFile}
+	              onOpenFolder={openFolder}
+	              onUnlock={unlockFileForAction}
+	            />
+          )}
+          <div className="panel-body quota-panel">
+            <ProgressBar value={percent} label={quotaUser?.quotaBytes == null ? `${formatBytes(usageBytes)} 사용 / 무제한` : `${formatBytes(usageBytes)} / ${formatBytes(quotaUser.quotaBytes)}`} />
+          </div>
+        </aside>
+      ) : null}
+
+      {selectedFile && sidePanelCollapsed ? (
+        <button className="side-panel-toggle-open" type="button" onClick={() => setSidePanelCollapsed(false)} title="사이드바 열기" aria-label="사이드바 열기">
+          <ChevronLeft size={19} />
+        </button>
+      ) : null}
+
+      <UploadQueue
+        uploads={uploadQueue.uploads}
+        onCancel={uploadQueue.cancelUpload}
+        onPause={uploadQueue.pauseUpload}
+        onResume={uploadQueue.resumeUpload}
+        onRetry={uploadQueue.resumeUpload}
+        onCancelAll={uploadQueue.cancelAllUploads}
+        onPauseAll={uploadQueue.pauseAllUploads}
+        onResumeAll={uploadQueue.resumeAllUploads}
+        onClearCompleted={uploadQueue.clearCompletedUploads}
+      />
+      <ShareDialog files={shareFiles} onClose={() => setShareFiles([])} />
+      <MoveDialog files={moveFiles} ownerId={ownerId} onMove={(destinationParentId) => moveItems(moveFiles, destinationParentId)} onClose={() => setMoveFiles([])} />
+      {passwordDialog ? (
+        <PasswordDialog
+          title={passwordDialog.title}
+          body={passwordDialog.body}
+          confirmLabel={passwordDialog.confirmLabel}
+          onSubmit={submitPasswordDialog}
+          onClose={closePasswordDialog}
+        />
+      ) : null}
+      <DriveContextMenu menu={contextMenu} onClose={closeContextMenu} />
+    </div>
+  );
+}
+
+function hasInternalMove(dataTransfer) {
+  return Array.from(dataTransfer?.types || []).includes(INTERNAL_MOVE_TYPE);
+}
+
+function readInternalMoveIds(dataTransfer, fallbackIds = []) {
+  try {
+    const ids = JSON.parse(dataTransfer?.getData(INTERNAL_MOVE_TYPE) || "[]");
+    return Array.isArray(ids) ? ids.filter(Boolean) : fallbackIds;
+  } catch {
+    return fallbackIds;
+  }
+}
+
+function clampPanelWidth(value) {
+  const viewportMax = typeof window === "undefined" ? SIDE_PANEL_MAX_WIDTH : Math.floor(window.innerWidth * 0.72);
+  const max = Math.max(SIDE_PANEL_MIN_WIDTH, Math.min(SIDE_PANEL_MAX_WIDTH, viewportMax));
+  return Math.max(SIDE_PANEL_MIN_WIDTH, Math.min(max, Math.round(Number(value) || SIDE_PANEL_DEFAULT_WIDTH)));
+}

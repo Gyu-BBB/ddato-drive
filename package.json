@@ -1,0 +1,29 @@
+{
+  "name": "ddato-drive",
+  "version": "0.1.0",
+  "description": "Self-hosted web drive backend for DDATO Drive",
+  "type": "module",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "vite --host 0.0.0.0 --port 5174",
+    "dev:api": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "dev:web": "vite --host 0.0.0.0 --port 5174",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4174",
+    "smoke": "node --disable-warning=ExperimentalWarning scripts/smoke-test.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "lucide-react": "^1.21.0",
+    "multer": "^2.1.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "engines": {
+    "node": ">=23.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.3",
+    "vite": "^8.1.0"
+  }
+}
