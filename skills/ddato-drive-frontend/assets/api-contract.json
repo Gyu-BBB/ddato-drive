@@ -1,0 +1,300 @@
+{
+  "name": "DDATO Drive API",
+  "basePath": "/api",
+  "auth": {
+    "type": "cookie-session",
+    "cookie": "ddato_drive_sid",
+    "fetchOptions": {
+      "credentials": "include"
+    }
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "description": "Check API and storage health."
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register",
+      "body": {
+        "id": "string",
+        "password": "string"
+      },
+      "response": {
+        "ok": true,
+        "user": "User"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "body": {
+        "id": "string",
+        "password": "string"
+      },
+      "response": {
+        "ok": true,
+        "user": "User"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "response": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "response": {
+        "ok": true,
+        "user": "User"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/files",
+      "query": {
+        "parentId": "string | null",
+        "ownerId": "string | optional admin only"
+      },
+      "response": {
+        "ok": true,
+        "owner": "User",
+        "parentId": "string | null",
+        "usageBytes": "number",
+        "files": "File[]"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/upload",
+      "contentType": "multipart/form-data",
+      "body": {
+        "file": "File",
+        "parentId": "string | optional",
+        "ownerId": "string | optional admin only",
+        "name": "string | optional"
+      },
+      "response": {
+        "ok": true,
+        "file": "File"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/folders",
+      "body": {
+        "name": "string",
+        "parentId": "string | optional",
+        "ownerId": "string | optional admin only"
+      },
+      "response": {
+        "ok": true,
+        "file": "File"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/:id",
+      "response": {
+        "ok": true,
+        "file": "File"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/files/:id/rename",
+      "body": {
+        "name": "string"
+      },
+      "response": {
+        "ok": true,
+        "file": "File"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/files/:id",
+      "response": {
+        "ok": true,
+        "deleted": "number",
+        "root": "File"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/:id/download",
+      "responseType": "blob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/:id/preview",
+      "responseType": "blob | inline browser preview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/:id/share",
+      "description": "Returns the active share link for a file, if one exists.",
+      "response": {
+        "ok": true,
+        "file": "File",
+        "share": "Share | null"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/:id/share",
+      "description": "Creates a new 1-hour or permanent share link and revokes older active links for that file.",
+      "body": {
+        "mode": "hour | permanent"
+      },
+      "response": {
+        "ok": true,
+        "file": "File",
+        "share": "Share"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/files/:id/share",
+      "description": "Revokes every active share link for the file.",
+      "response": {
+        "ok": true,
+        "file": "File",
+        "revoked": "number"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/shares/:token",
+      "public": true,
+      "response": {
+        "ok": true,
+        "share": "Share",
+        "file": "File",
+        "previewSupported": "boolean"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/shares/:token/download",
+      "public": true,
+      "responseType": "blob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/shares/:token/preview",
+      "public": true,
+      "responseType": "blob | inline browser preview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users",
+      "adminOnly": true,
+      "response": {
+        "ok": true,
+        "users": "User[]"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/users/:id/quota",
+      "adminOnly": true,
+      "body": {
+        "quotaMb": "number | null",
+        "quotaBytes": "number | null",
+        "unlimited": "boolean"
+      },
+      "response": {
+        "ok": true,
+        "user": "User"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/:id/files",
+      "adminOnly": true,
+      "query": {
+        "parentId": "string | optional"
+      },
+      "response": {
+        "ok": true,
+        "owner": "User",
+        "parentId": "string | null",
+        "usageBytes": "number",
+        "files": "File[]"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/users/:id",
+      "adminOnly": true,
+      "response": {
+        "ok": true,
+        "user": "User"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/storage",
+      "adminOnly": true,
+      "response": {
+        "ok": true,
+        "storage": "StorageSummary"
+      }
+    }
+  ],
+  "schemas": {
+    "User": {
+      "id": "string",
+      "role": "admin | user",
+      "quotaBytes": "number | null",
+      "quotaMb": "number | null",
+      "disabledAt": "number | null",
+      "createdAt": "number",
+      "updatedAt": "number",
+      "lastLoginAt": "number | null",
+      "usageBytes": "number"
+    },
+    "File": {
+      "id": "string",
+      "ownerId": "string",
+      "parentId": "string | null",
+      "type": "file | folder",
+      "name": "string",
+      "mimeType": "string | null",
+      "sizeBytes": "number",
+      "createdAt": "number",
+      "updatedAt": "number"
+    },
+    "Share": {
+      "id": "string",
+      "fileId": "string",
+      "ownerId": "string",
+      "mode": "hour | permanent",
+      "token": "string",
+      "url": "string",
+      "expiresAt": "number | null",
+      "revokedAt": "number | null",
+      "createdBy": "string",
+      "createdAt": "number",
+      "updatedAt": "number"
+    },
+    "StorageSummary": {
+      "dataDir": "string",
+      "dbFile": "string",
+      "users": "number",
+      "files": "number",
+      "folders": "number",
+      "usedBytes": "number"
+    },
+    "Error": {
+      "ok": false,
+      "error": "string",
+      "details": "object | optional"
+    }
+  }
+}

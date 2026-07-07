@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DDATO Drive Components</title>
+    <link rel="stylesheet" href="./tokens.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--dd-bg);
+        color: var(--dd-fg);
+        font: 14px/1.4 var(--dd-font-ui);
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: var(--dd-shell-sidebar) 1fr 360px;
+        min-height: 100vh;
+      }
+      .sidebar,
+      .preview {
+        background: var(--dd-surface);
+        border-right: 1px solid var(--dd-border);
+        padding: var(--dd-space-5);
+      }
+      .preview {
+        border-right: 0;
+        border-left: 1px solid var(--dd-border);
+      }
+      .toolbar {
+        height: var(--dd-toolbar-height);
+        display: flex;
+        align-items: center;
+        gap: var(--dd-space-2);
+        padding: 0 var(--dd-space-4);
+        background: var(--dd-surface);
+        border-bottom: 1px solid var(--dd-border);
+      }
+      .content {
+        min-width: 0;
+      }
+      .button {
+        height: 36px;
+        border-radius: var(--dd-radius-md);
+        border: 1px solid var(--dd-border);
+        background: var(--dd-surface);
+        color: var(--dd-fg);
+        padding: 0 var(--dd-space-4);
+        font: inherit;
+      }
+      .button.primary {
+        border-color: var(--dd-primary);
+        background: var(--dd-primary);
+        color: white;
+      }
+      .file-row {
+        min-height: var(--dd-row-height);
+        display: grid;
+        grid-template-columns: 1fr 110px 140px;
+        gap: var(--dd-space-4);
+        align-items: center;
+        padding: 0 var(--dd-space-4);
+        background: var(--dd-surface);
+        border-bottom: 1px solid var(--dd-border);
+      }
+      .file-name {
+        font-weight: 600;
+      }
+      .muted {
+        color: var(--dd-muted);
+        font-size: 12px;
+      }
+      .quota {
+        height: 6px;
+        border-radius: 999px;
+        background: var(--dd-surface-raised);
+        overflow: hidden;
+      }
+      .quota > span {
+        display: block;
+        width: 42%;
+        height: 100%;
+        background: var(--dd-primary);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <h1 style="font-size:20px;margin:0 0 24px">DDATO Drive</h1>
+        <p class="muted">Storage</p>
+        <div class="quota"><span></span></div>
+        <p class="muted">42 MB of 100 MB used</p>
+      </aside>
+      <section class="content">
+        <div class="toolbar">
+          <button class="button primary">Upload</button>
+          <button class="button">New folder</button>
+          <button class="button">Download</button>
+        </div>
+        <div class="file-row">
+          <div>
+            <div class="file-name">project-notes.pdf</div>
+            <div class="muted">PDF document</div>
+          </div>
+          <div class="muted">2.4 MB</div>
+          <div class="muted">Today</div>
+        </div>
+        <div class="file-row">
+          <div>
+            <div class="file-name">photos</div>
+            <div class="muted">Folder</div>
+          </div>
+          <div class="muted">-</div>
+          <div class="muted">Yesterday</div>
+        </div>
+      </section>
+      <aside class="preview">
+        <p class="muted">Preview</p>
+        <h2 style="font-size:18px;margin:0 0 12px">project-notes.pdf</h2>
+        <p>Use a plain preview pane with clear download and close actions.</p>
+      </aside>
+    </main>
+  </body>
+</html>

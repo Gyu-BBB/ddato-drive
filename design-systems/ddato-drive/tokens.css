@@ -1,0 +1,31 @@
+:root {
+  --dd-bg: #f7f8fa;
+  --dd-surface: #ffffff;
+  --dd-surface-raised: #f2f5f8;
+  --dd-fg: #17202a;
+  --dd-muted: #64717f;
+  --dd-border: #dce3ea;
+  --dd-primary: #0e7c66;
+  --dd-primary-hover: #0a6755;
+  --dd-info: #2563eb;
+  --dd-warn: #b7791f;
+  --dd-danger: #c2413a;
+  --dd-success: #248a55;
+
+  --dd-font-ui: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --dd-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --dd-radius-sm: 6px;
+  --dd-radius-md: 8px;
+  --dd-radius-lg: 10px;
+  --dd-space-1: 4px;
+  --dd-space-2: 8px;
+  --dd-space-3: 12px;
+  --dd-space-4: 16px;
+  --dd-space-5: 20px;
+  --dd-space-6: 24px;
+  --dd-shell-sidebar: 248px;
+  --dd-toolbar-height: 52px;
+  --dd-row-height: 48px;
+  --dd-shadow-popover: 0 8px 24px rgba(23, 32, 42, 0.12);
+}

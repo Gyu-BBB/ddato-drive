@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DDATO Drive Design Preview</title>
+    <link rel="stylesheet" href="../tokens.css" />
+    <style>
+      body {
+        margin: 0;
+        padding: 32px;
+        background: var(--dd-bg);
+        color: var(--dd-fg);
+        font: 14px/1.4 var(--dd-font-ui);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .swatch,
+      .panel {
+        background: var(--dd-surface);
+        border: 1px solid var(--dd-border);
+        border-radius: var(--dd-radius-md);
+        padding: 16px;
+      }
+      .color {
+        height: 56px;
+        border-radius: var(--dd-radius-sm);
+        margin-bottom: 10px;
+      }
+      .muted {
+        color: var(--dd-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>DDATO Drive</h1>
+    <p class="muted">Quiet, file-first, operational UI for a self-hosted web drive.</p>
+    <section class="grid">
+      <div class="swatch"><div class="color" style="background:var(--dd-primary)"></div>Primary</div>
+      <div class="swatch"><div class="color" style="background:var(--dd-info)"></div>Info</div>
+      <div class="swatch"><div class="color" style="background:var(--dd-warn)"></div>Warn</div>
+      <div class="swatch"><div class="color" style="background:var(--dd-danger)"></div>Danger</div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Workspace rule</h2>
+      <p>The generated frontend should open into the drive workspace, not a landing page.</p>
+    </section>
+  </body>
+</html>
