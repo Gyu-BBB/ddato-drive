@@ -440,6 +440,12 @@ try {
     body: { password: "folder-secret" },
     jar: userJar
   });
+  const lockedBulkDownload = await rawRequest("/api/files/download", {
+    method: "POST",
+    body: { ids: [uploaded.file.id, lockedFolder.file.id] },
+    jar: userJar
+  });
+  assert(lockedBulkDownload.status === 423, "bulk download should require password when a selected item is locked");
   const lockedFolderColor = await rawRequest(`/api/folders/${lockedFolder.file.id}/color`, {
     method: "PATCH",
     body: { color: "blue" },
@@ -542,6 +548,19 @@ try {
   assert(folderZip.subarray(0, 2).toString("utf8") === "PK", "folder ZIP missing PK header");
   assert(folderZip.includes(Buffer.from("nested.txt")), "folder ZIP missing nested file name");
   assert(folderZip.includes(Buffer.from(nestedMacExpectedName, "utf8")), "folder ZIP missing normalized Korean file name");
+
+  const selectedDownload = await rawRequest("/api/files/download", {
+    method: "POST",
+    body: { ids: [uploaded.file.id, folder.file.id, nestedUpload.file.id] },
+    jar: userJar
+  });
+  assert(selectedDownload.status === 200, "bulk selected ZIP download failed");
+  assert(String(selectedDownload.headers.get("content-type") || "").includes("application/zip"), "bulk selected download is not a ZIP");
+  const selectedZip = Buffer.from(await selectedDownload.arrayBuffer());
+  assert(selectedZip.subarray(0, 2).toString("utf8") === "PK", "bulk selected ZIP missing PK header");
+  assert(selectedZip.includes(Buffer.from("hello.txt")), "bulk selected ZIP missing selected file");
+  assert(selectedZip.includes(Buffer.from("Documents/nested.txt")), "bulk selected ZIP missing selected folder child");
+  assert(countBufferOccurrences(selectedZip, Buffer.from("Documents/nested.txt")) === 2, "bulk selected ZIP duplicated a child selected with its folder");
 
   const permanentShare = await request(`/api/files/${uploaded.file.id}/share`, {
     method: "POST",
@@ -1027,4 +1046,16 @@ function encodeRfc5987FileName(value) {
   return `filename*=UTF-8''${encodeURIComponent(value).replace(/[!'()*]/g, (char) => {
     return `%${char.charCodeAt(0).toString(16).toUpperCase()}`;
   })}`;
+}
+
+function countBufferOccurrences(buffer, needle) {
+  let count = 0;
+  let index = 0;
+  while (index <= buffer.length - needle.length) {
+    const next = buffer.indexOf(needle, index);
+    if (next < 0) break;
+    count += 1;
+    index = next + needle.length;
+  }
+  return count;
 }

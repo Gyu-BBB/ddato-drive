@@ -369,6 +369,32 @@ export class FileService {
     };
   }
 
+  getSelectionDownloadStreamTarget(req, fileIds) {
+    const ids = normalizeFileIds(fileIds);
+    if (!ids.length) fail(400, "다운로드할 항목을 선택하세요.");
+    if (ids.length > 500) fail(400, "한 번에 다운로드할 수 있는 항목은 500개까지입니다.");
+
+    const selected = ids.map((id) => this.getAccessibleFile(req.user, id));
+    const roots = this.filterSelectedTreeRoots(selected);
+    const rowsById = new Map();
+
+    for (const root of roots) {
+      const rows = fileRepository.loadActiveTree(root.id);
+      if (!rows.length) fail(404, "File was not found.");
+      accessPasswordService.assertFileTreeAccess(req, root, rows);
+      for (const row of rows) rowsById.set(row.id, row);
+    }
+
+    return {
+      file: { original_name: "DDATO Drive 선택 항목" },
+      zipRows: [...rowsById.values()],
+      rootIds: roots.map((root) => root.id),
+      contentType: "application/zip",
+      disposition: "attachment",
+      fileName: roots.length === 1 ? `${roots[0].original_name}.zip` : "DDATO Drive 선택 항목.zip"
+    };
+  }
+
   getPreviewStreamTarget(req, fileId) {
     const file = this.getAccessibleFile(req.user, fileId);
     accessPasswordService.assertFileAccess(req, file);
@@ -527,6 +553,12 @@ export class FileService {
     return byParent;
   }
 
+  filterSelectedTreeRoots(files) {
+    const selectedIds = new Set(files.map((file) => file.id));
+    const ownerMaps = new Map();
+    return files.filter((file) => !hasSelectedAncestor(file, selectedIds, ownerMaps));
+  }
+
   duplicateTreeRow(row, { parentId, name, byParent, copiedPaths }) {
     const id = crypto.randomUUID();
     let copy;
@@ -615,6 +647,28 @@ export class FileService {
 
     return path;
   }
+}
+
+function normalizeFileIds(value) {
+  const values = Array.isArray(value) ? value : [];
+  return [...new Set(values.map((id) => String(id || "").trim()).filter(Boolean))];
+}
+
+function hasSelectedAncestor(file, selectedIds, ownerMaps) {
+  if (!file?.parent_id) return false;
+  let byId = ownerMaps.get(file.owner_id);
+  if (!byId) {
+    byId = new Map(fileRepository.listActiveByOwner(file.owner_id).map((row) => [row.id, row]));
+    ownerMaps.set(file.owner_id, byId);
+  }
+
+  let parentId = file.parent_id;
+  while (parentId) {
+    if (selectedIds.has(parentId)) return true;
+    const parent = byId.get(parentId);
+    parentId = parent?.parent_id || "";
+  }
+  return false;
 }
 
 function previewPdfName(file) {

@@ -201,7 +201,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 
   async function duplicateSelected(targets = selectedFiles) {
     if (trashMode) return;
-    const items = targets.filter(Boolean);
+    const items = compactTreeSelection(targets.filter(Boolean));
     if (!items.length) return;
     if (!(await ensureFilesUnlocked(items, "복제"))) return;
     await runAction(async () => {
@@ -217,7 +217,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       await purgeSelected(targets);
       return;
     }
-    const items = targets.filter(Boolean);
+    const items = compactTreeSelection(targets.filter(Boolean));
     if (!items.length) return;
     if (!(await ensureFilesUnlocked(items, "삭제"))) return;
     const label = items.length === 1 ? `${items[0].name}을 삭제할까요?` : `${items.length}개 항목을 삭제할까요?`;
@@ -374,15 +374,26 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       setError("휴지통 항목은 복원한 뒤 다운로드할 수 있습니다.");
       return;
     }
-    const itemsToDownload = targets.filter(Boolean);
+    const itemsToDownload = compactTreeSelection(targets.filter(Boolean));
     if (!itemsToDownload.length) {
       setError("다운로드할 항목을 선택하세요.");
       return;
     }
     setError("");
     if (!(await ensureFilesUnlocked(itemsToDownload, "다운로드"))) return;
-    for (const item of itemsToDownload) {
-      window.open(filesApi.downloadUrl(item.id), "_blank", "noopener,noreferrer");
+    if (itemsToDownload.length === 1) {
+      triggerUrlDownload(filesApi.downloadUrl(itemsToDownload[0].id));
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const blob = await filesApi.downloadSelection(itemsToDownload.map((item) => item.id));
+      triggerBlobDownload(blob, "DDATO Drive 선택 항목.zip");
+    } catch (nextError) {
+      setError(nextError.message || "선택 항목을 다운로드하지 못했습니다.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -391,7 +402,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       setError("휴지통 항목은 복원한 뒤 공유할 수 있습니다.");
       return;
     }
-    const itemsToShare = targets.filter(Boolean);
+    const itemsToShare = compactTreeSelection(targets.filter(Boolean));
     if (!itemsToShare.length) {
       setError("공유할 항목을 선택하세요.");
       return;
@@ -516,7 +527,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       setError("휴지통 항목은 복원한 뒤 이동할 수 있습니다.");
       return;
     }
-    const itemsToMove = targets.filter(Boolean);
+    const itemsToMove = compactTreeSelection(targets.filter(Boolean));
     if (!itemsToMove.length) {
       setError("이동할 항목을 선택하세요.");
       return;
@@ -532,7 +543,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       return false;
     }
 
-    const items = targets.filter(Boolean);
+    const items = compactTreeSelection(targets.filter(Boolean));
     if (!items.length) {
       setError("이동할 항목을 선택하세요.");
       return false;
@@ -734,6 +745,17 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   function getContextSelection(file) {
     if (!file) return selectedFiles;
     return selectedIds.includes(file.id) ? selectedFiles : [file];
+  }
+
+  function compactTreeSelection(items) {
+    const selected = items.filter(Boolean);
+    const ids = new Set(selected.map((item) => item.id));
+    return selected.filter((item) => !hasSelectedAncestor(item, ids));
+  }
+
+  function hasSelectedAncestor(item, ids) {
+    const path = Array.isArray(item?.path) ? item.path : [];
+    return path.some((entry) => entry.id !== item.id && ids.has(entry.id));
   }
 
 	  function openItemContextMenu(event, file) {
@@ -1042,6 +1064,32 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 
 function hasInternalMove(dataTransfer) {
   return Array.from(dataTransfer?.types || []).includes(INTERNAL_MOVE_TYPE);
+}
+
+function triggerUrlDownload(url) {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.rel = "noopener noreferrer";
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function triggerBlobDownload(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.rel = "noopener noreferrer";
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 function readInternalMoveIds(dataTransfer, fallbackIds = []) {

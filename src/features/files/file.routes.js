@@ -120,6 +120,15 @@ filesRouter.delete("/files/upload-sessions/:sessionId", requireUser, asyncRoute(
   res.json({ ok: true, ...result });
 }));
 
+filesRouter.post("/files/download", requireUser, asyncRoute(async (req, res) => {
+  const target = fileService.getSelectionDownloadStreamTarget(req, req.body?.ids);
+  auditLogger.record("file.download.selection", req, null, {
+    rootIds: target.rootIds,
+    count: target.rootIds.length
+  });
+  await sendZipStream(res, target);
+}));
+
 filesRouter.get("/files/:id", requireUser, asyncRoute((req, res) => {
   const file = fileService.getAccessibleFile(req.user, req.params.id);
   res.json({ ok: true, file: fileService.serializeFileForRequest(req, file) });
@@ -237,6 +246,10 @@ async function sendZipStream(res, target, cacheControl = "private, no-store") {
   res.setHeader("Content-Disposition", contentDisposition(target.disposition || "attachment", target.fileName || `${target.file.original_name}.zip`));
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", cacheControl);
+  if (target.rootIds) {
+    await zipArchiveService.streamSelectionZip(target.zipRows, target.rootIds, res);
+    return;
+  }
   await zipArchiveService.streamFolderZip(target.file, target.zipRows, res);
 }
 
