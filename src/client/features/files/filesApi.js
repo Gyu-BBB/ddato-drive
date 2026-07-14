@@ -67,6 +67,7 @@ export const filesApi = {
   previewStatus: (id) => apiRequest(`/api/files/${encodeURIComponent(id)}/preview-status`),
   previewBlob: (id) => apiRequest(`/api/files/${encodeURIComponent(id)}/preview`, { responseType: "blob" }),
   previewUrl: (id) => `/api/files/${encodeURIComponent(id)}/preview`,
+  downloadSelection: (ids) => apiRequest("/api/files/download", { method: "POST", body: { ids }, responseType: "blob" }),
   downloadUrl: (id) => `/api/files/${encodeURIComponent(id)}/download`
 };
 

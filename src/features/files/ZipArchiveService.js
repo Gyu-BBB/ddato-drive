@@ -21,6 +21,13 @@ export class ZipArchiveService {
     await this.writeZipStream(writable, entries);
   }
 
+  async streamSelectionZip(rows, rootIds, writable) {
+    const rootRows = rows.filter((row) => !row.deleted_at);
+    const paths = this.buildSelectionZipPaths(rootRows, rootIds);
+    const entries = this.prepareEntries(rootRows, paths);
+    await this.writeZipStream(writable, entries);
+  }
+
   buildZipPaths(root, rows) {
     const byId = new Map(rows.map((row) => [row.id, row]));
     const safeSegments = uniqueZipSegments(rows);
@@ -35,6 +42,38 @@ export class ZipArchiveService {
       }
       const parentPath = resolvePath(byId.get(row.parent_id));
       const value = `${parentPath}/${name}`;
+      memo.set(row.id, value);
+      return value;
+    };
+
+    for (const row of rows) resolvePath(row);
+    return memo;
+  }
+
+  buildSelectionZipPaths(rows, rootIds) {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const rootIdSet = new Set(rootIds);
+    const roots = rootIds.map((id) => byId.get(id)).filter(Boolean);
+    const rootSegments = uniqueSegmentsForRows(roots);
+    const childSegments = uniqueZipSegments(rows);
+    const memo = new Map();
+
+    const resolvePath = (row) => {
+      if (memo.has(row.id)) return memo.get(row.id);
+      if (rootIdSet.has(row.id)) {
+        const rootName = rootSegments.get(row.id) || sanitizeZipPathSegment(row.original_name);
+        memo.set(row.id, rootName);
+        return rootName;
+      }
+
+      const name = childSegments.get(row.id) || sanitizeZipPathSegment(row.original_name);
+      const parent = byId.get(row.parent_id);
+      if (!parent) {
+        memo.set(row.id, name);
+        return name;
+      }
+
+      const value = `${resolvePath(parent)}/${name}`;
       memo.set(row.id, value);
       return value;
     };
@@ -260,12 +299,18 @@ function uniqueZipSegments(rows) {
 
   const segments = new Map();
   for (const siblings of byParent.values()) {
-    const used = new Set();
-    for (const row of siblings) {
-      const preferred = sanitizeZipPathSegment(row.original_name);
-      const segment = nextZipSegment(preferred, used, row.type === "file");
-      segments.set(row.id, segment);
-    }
+    for (const [id, segment] of uniqueSegmentsForRows(siblings)) segments.set(id, segment);
+  }
+  return segments;
+}
+
+function uniqueSegmentsForRows(rows) {
+  const used = new Set();
+  const segments = new Map();
+  for (const row of rows) {
+    const preferred = sanitizeZipPathSegment(row.original_name);
+    const segment = nextZipSegment(preferred, used, row.type === "file");
+    segments.set(row.id, segment);
   }
   return segments;
 }
