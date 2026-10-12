@@ -56,6 +56,11 @@ export function useFilePreview(file, loadBlob, getPreviewUrl = null, loadPreview
 
     if (shouldPollDocumentPreview(file) && loadPreviewStatus && getPreviewUrl) {
       const poll = async () => {
+        if (!active) return;
+        if (document.hidden) {
+          pollTimer = window.setTimeout(poll, 5000);
+          return;
+        }
         try {
           setState((current) => ({
             ...current,
@@ -85,7 +90,7 @@ export function useFilePreview(file, loadBlob, getPreviewUrl = null, loadPreview
             message: result.preview?.message || "문서 미리보기를 생성하는 중입니다.",
             requiresPassword: false
           });
-          pollTimer = window.setTimeout(poll, 1200);
+          pollTimer = window.setTimeout(poll, Math.max(1200, Math.min(5000, result.preview?.retryAfterMs || 1200)));
         } catch (nextError) {
           if (active) {
             setState({ loading: false, url: "", text: "", spreadsheet: null, error: nextError.message || "미리보기를 열 수 없습니다.", message: "", requiresPassword: nextError.details?.code === "password_required" });

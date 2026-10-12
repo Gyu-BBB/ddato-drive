@@ -40,6 +40,7 @@ function labelAction(action) {
     "file.duplicate": "복제",
     "trash.restore": "복원",
     "trash.purge": "영구 삭제",
+    "trash.auto_purge": "휴지통 자동 영구 삭제",
     "file.share.create": "공유 생성",
     "file.share.revoke": "공유 해제",
     "share.public.view": "공유 열람",

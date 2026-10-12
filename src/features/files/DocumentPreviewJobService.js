@@ -1,20 +1,23 @@
 import { documentPdfPreviewService } from "./DocumentPdfPreviewService.js";
 
 export class DocumentPreviewJobService {
-  constructor() {
+  constructor({ converter = documentPdfPreviewService, maxQueue = 32, maxHistory = 200 } = {}) {
+    this.converter = converter;
+    this.maxQueue = maxQueue;
+    this.maxHistory = maxHistory;
     this.jobs = new Map();
     this.queue = [];
     this.running = false;
   }
 
   getStatus(file, absolutePath, { enqueue = true } = {}) {
-    if (!documentPdfPreviewService.canTryConvert(file)) {
+    if (!this.converter.canTryConvert(file)) {
       return { status: "fallback", message: "PDF 변환을 지원하지 않아 텍스트 미리보기를 사용합니다." };
     }
-    if (!documentPdfPreviewService.canConvert(file)) {
+    if (!this.converter.canConvert(file)) {
       return { status: "fallback", message: "문서 변환 프로그램을 찾지 못해 텍스트 미리보기를 사용합니다." };
     }
-    if (documentPdfPreviewService.cachedPdfPath(file)) {
+    if (this.converter.cachedPdfPath(file)) {
       return { status: "ready", message: "미리보기가 준비되었습니다." };
     }
 
@@ -23,11 +26,12 @@ export class DocumentPreviewJobService {
     if (job?.status === "error") {
       return { status: "fallback", message: "PDF 미리보기를 만들지 못해 텍스트 미리보기를 사용합니다." };
     }
-    if (enqueue) this.enqueue(file, absolutePath);
+    const queued = enqueue ? this.enqueue(file, absolutePath) : job;
     return {
-      status: job?.status || "pending",
-      message: "문서 미리보기를 생성하는 중입니다.",
-      queuedAt: job?.queuedAt || Date.now()
+      status: queued?.status || "pending",
+      message: enqueue && !queued ? "다른 문서의 미리보기가 준비되면 자동으로 처리합니다." : "문서 미리보기를 생성하는 중입니다.",
+      retryAfterMs: queued?.status === "running" ? 1200 : 3000,
+      queuedAt: queued?.queuedAt || Date.now()
     };
   }
 
@@ -35,6 +39,7 @@ export class DocumentPreviewJobService {
     const key = this.key(file);
     const existing = this.jobs.get(key);
     if (existing && ["queued", "running"].includes(existing.status)) return existing;
+    if (this.queue.length >= this.maxQueue) return null;
 
     const job = {
       key,
@@ -63,7 +68,7 @@ export class DocumentPreviewJobService {
 
     setImmediate(async () => {
       try {
-        const pdfPath = await documentPdfPreviewService.convertToPdf(job.file, job.absolutePath);
+        const pdfPath = await this.converter.convertToPdf(job.file, job.absolutePath);
         if (!pdfPath) throw new Error("Document conversion did not produce a PDF.");
         job.status = "ready";
         job.updatedAt = Date.now();
@@ -73,6 +78,7 @@ export class DocumentPreviewJobService {
         job.updatedAt = Date.now();
       } finally {
         this.running = false;
+        this.trim();
         this.runNext();
       }
     });
@@ -83,9 +89,9 @@ export class DocumentPreviewJobService {
   }
 
   trim() {
-    if (this.jobs.size <= 500) return;
-    const entries = [...this.jobs.values()].sort((a, b) => a.updatedAt - b.updatedAt);
-    for (const job of entries.slice(0, this.jobs.size - 500)) {
+    const entries = [...this.jobs.values()].filter(job => !["queued", "running"].includes(job.status))
+      .sort((a, b) => a.updatedAt - b.updatedAt);
+    for (const job of entries.slice(0, Math.max(0, entries.length - this.maxHistory))) {
       this.jobs.delete(job.key);
     }
   }

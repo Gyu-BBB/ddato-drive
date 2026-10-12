@@ -15,22 +15,23 @@ export class AccessPasswordService {
     return verifyPassword(normalizePassword(password), encoded);
   }
 
-  findFileProtection(file) {
+  findFileProtection(file, byId = null) {
     if (!file) return null;
     if (file.access_password_hash) return file;
 
-    const rows = fileRepository.listActiveByOwner(file.owner_id);
-    const byId = new Map(rows.map((row) => [row.id, row]));
+    if (!byId) return fileRepository.findAncestorProtection(file);
     let cursor = file.parent_id ? byId.get(file.parent_id) : null;
-    while (cursor) {
+    const visited = new Set();
+    while (cursor && cursor.deleted_at == null && cursor.owner_id === file.owner_id && !visited.has(cursor.id)) {
+      visited.add(cursor.id);
       if (cursor.access_password_hash) return cursor;
       cursor = cursor.parent_id ? byId.get(cursor.parent_id) : null;
     }
     return null;
   }
 
-  serializeFileProtection(req, file) {
-    const protection = this.findFileProtection(file);
+  serializeFileProtection(req, file, byId = null) {
+    const protection = this.findFileProtection(file, byId);
     return {
       passwordProtected: Boolean(protection),
       ownPasswordProtected: Boolean(file?.access_password_hash),

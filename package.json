@@ -14,7 +14,10 @@
     "test:transfers": "node scripts/storage-performance-test.js && node scripts/upload-store-test.js && node scripts/transfer-progress-test.js",
     "test:zip-preview": "node scripts/zip-preview-test.js",
     "test:archive-preview": "node scripts/archive-preview-test.js",
-    "test:folder-upload": "node scripts/folder-upload-test.js"
+    "test:folder-upload": "node scripts/folder-upload-test.js",
+    "test:trash-retention": "node --disable-warning=ExperimentalWarning scripts/trash-retention-test.js",
+    "test:drag-move": "node scripts/drag-move-test.js",
+    "test:resources": "node --disable-warning=ExperimentalWarning scripts/server-resource-test.js"
   },
   "dependencies": {
     "express": "^5.2.1",

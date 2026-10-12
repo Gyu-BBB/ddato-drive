@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { once } from "node:events";
+import { crc32 } from "node:zlib";
 import { finished } from "node:stream/promises";
 import { normalizeCrossPlatformFileName } from "../../core/fileNames.js";
 import { fileStorage } from "./FileStorage.js";
@@ -11,20 +11,19 @@ const DATA_DESCRIPTOR_FLAG = 0x0008;
 const STORE_METHOD = 0;
 const MAX_UINT32 = 0xffffffff;
 const MAX_UINT16 = 0xffff;
-const crcTable = createCrcTable();
 
 export class ZipArchiveService {
   async streamFolderZip(root, rows, writable) {
     const rootRows = rows.filter((row) => !row.deleted_at);
     const paths = this.buildZipPaths(root, rootRows);
-    const entries = this.prepareEntries(rootRows, paths);
+    const entries = await this.prepareEntries(rootRows, paths);
     await this.writeZipStream(writable, entries);
   }
 
   async streamSelectionZip(rows, rootIds, writable) {
     const rootRows = rows.filter((row) => !row.deleted_at);
     const paths = this.buildSelectionZipPaths(rootRows, rootIds);
-    const entries = this.prepareEntries(rootRows, paths);
+    const entries = await this.prepareEntries(rootRows, paths);
     await this.writeZipStream(writable, entries);
   }
 
@@ -82,31 +81,33 @@ export class ZipArchiveService {
     return memo;
   }
 
-  prepareEntries(rows, paths) {
-    return rows.map((row) => {
+  async prepareEntries(rows, paths) {
+    const entries = [];
+    for (const row of rows) {
       const entryName = row.type === "folder" ? `${paths.get(row.id)}/` : paths.get(row.id);
       const nameBuffer = Buffer.from(entryName, "utf8");
       const absolutePath = row.type === "file" ? fileStorage.getAbsoluteFilePath(row) : "";
-      const size = row.type === "file" ? fs.statSync(absolutePath).size : 0;
-      return {
+      const size = row.type === "file" ? (await fs.promises.stat(absolutePath)).size : 0;
+      entries.push({
         row,
         nameBuffer,
         absolutePath,
         size,
         isDirectory: row.type === "folder",
         dos: toDosDateTime(row.updated_at || row.created_at)
-      };
-    });
+      });
+    }
+    return entries;
   }
 
   async writeZipStream(writable, entries) {
     let predictedOffset = 0;
-    const predictedCentral = [];
+    let predictedCentralSize = 0;
     for (const entry of entries) {
-      predictedCentral.push({ ...entry, localOffset: predictedOffset, crc: 0, dosTime: entry.dos.dosTime, dosDate: entry.dos.dosDate });
+      predictedCentralSize += centralHeader({ ...entry, localOffset: predictedOffset, crc: 0,
+        dosTime: entry.dos.dosTime, dosDate: entry.dos.dosDate }).length;
       predictedOffset += streamingLocalHeader(entry).length + entry.size + dataDescriptor(0, entry.size, entryNeedsZip64(entry)).length;
     }
-    const predictedCentralSize = predictedCentral.reduce((total, entry) => total + centralHeader(entry).length, 0);
     const predictedZip64 = archiveNeedsZip64(entries.length, predictedCentralSize, predictedOffset);
     writable.setHeader?.("Content-Length", predictedOffset + predictedCentralSize + 22 + (predictedZip64 ? 76 : 0));
     let offset = 0;
@@ -121,18 +122,18 @@ export class ZipArchiveService {
       const localOffset = offset;
       await write(streamingLocalHeader(entry));
 
-      let crcState = 0xffffffff;
+      let crcState = 0;
       let size = 0;
       if (!entry.isDirectory) {
         for await (const chunk of fs.createReadStream(entry.absolutePath)) {
           const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-          crcState = crc32Update(crcState, buffer);
+          crcState = crc32(buffer, crcState);
           size += buffer.length;
           await write(buffer);
         }
       }
 
-      const crc = entry.isDirectory ? 0 : (crcState ^ 0xffffffff) >>> 0;
+      const crc = entry.isDirectory ? 0 : crcState;
       await write(dataDescriptor(crc, size, entryNeedsZip64({ ...entry, size })));
 
       centralEntries.push({
@@ -356,29 +357,23 @@ function toDosDateTime(value) {
   return { dosTime, dosDate };
 }
 
-function createCrcTable() {
-  const table = new Uint32Array(256);
-  for (let index = 0; index < table.length; index += 1) {
-    let value = index;
-    for (let bit = 0; bit < 8; bit += 1) {
-      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-    }
-    table[index] = value >>> 0;
-  }
-  return table;
-}
-
-function crc32Update(crc, buffer) {
-  for (const byte of buffer) {
-    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  }
-  return crc;
-}
-
 async function writeBuffer(writable, buffer) {
-  if (writable.destroyed) return;
+  if (writable.destroyed) throw new Error("ZIP download was disconnected.");
   if (!writable.write(buffer)) {
-    await once(writable, "drain");
+    await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        writable.off("drain", onDrain);
+        writable.off("error", onError);
+        writable.off("close", onClose);
+      };
+      const onDrain = () => { cleanup(); resolve(); };
+      const onError = error => { cleanup(); reject(error); };
+      const onClose = () => onError(new Error("ZIP download was disconnected."));
+      writable.once("drain", onDrain);
+      writable.once("error", onError);
+      writable.once("close", onClose);
+      if (writable.destroyed) onClose();
+    });
   }
 }
 

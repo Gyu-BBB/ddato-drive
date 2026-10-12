@@ -39,6 +39,10 @@ export function MetadataDetails({ file, onOpenFolder, openFolderDisabled = false
         <MetadataRow label="크기" value={file.type === "folder" ? "-" : formatBytes(file.sizeBytes)} />
         <MetadataRow label="수정일" value={formatDate(file.updatedAt)} />
         <MetadataRow label="생성일" value={formatDate(file.createdAt)} />
+        {file.deletedAt != null ? <>
+          <MetadataRow label="삭제일" value={formatDate(file.deletedAt)} />
+          <MetadataRow label="자동 영구 삭제일" value={formatDate(file.trashExpiresAt)} />
+        </> : null}
         <MetadataRow label="경로" value={filePath(file)} />
         <MetadataRow label="암호" value={passwordLabel(file)} />
       </dl>

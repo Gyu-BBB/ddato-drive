@@ -13,7 +13,7 @@ import { serializeFile } from "./file.serializer.js";
 import { fileStorage } from "./FileStorage.js";
 import { mimeTypePolicy } from "./MimeTypePolicy.js";
 import { previewPolicy } from "./PreviewPolicy.js";
-import { documentTextPreviewService } from "./DocumentTextPreviewService.js";
+import { documentPreviewWorkerService } from "./DocumentPreviewWorkerService.js";
 import { documentPdfPreviewService } from "./DocumentPdfPreviewService.js";
 import { documentPreviewJobService } from "./DocumentPreviewJobService.js";
 import { uploadSessionStore } from "./UploadSessionStore.js";
@@ -202,7 +202,7 @@ export class FileService {
     const normalizedParentId = this.normalizeParentId(parentId);
     if ((file.parent_id || null) === normalizedParentId) {
       return this.serializeFileForRequest(req, file, {
-        path: this.buildPath(file, new Map(fileRepository.listActiveByOwner(file.owner_id).map((row) => [row.id, row])))
+        path: this.buildPath(file, new Map(fileRepository.listFoldersByOwner(file.owner_id).map((row) => [row.id, row])))
       });
     }
 
@@ -222,7 +222,7 @@ export class FileService {
       name: uniqueName
     });
     return this.serializeFileForRequest(req, moved, {
-      path: this.buildPath(moved, new Map(fileRepository.listActiveByOwner(moved.owner_id).map((row) => [row.id, row])))
+      path: this.buildPath(moved, new Map(fileRepository.listFoldersByOwner(moved.owner_id).map((row) => [row.id, row])))
     });
   }
 
@@ -412,7 +412,7 @@ export class FileService {
     if (preview.mode === "spreadsheet") {
       return {
         file,
-        json: documentTextPreviewService.extractSpreadsheetPreview(file, absolutePath),
+        json: await documentPreviewWorkerService.extractSpreadsheetPreview(file, absolutePath),
         contentType: preview.contentType,
         disposition: preview.disposition
       };
@@ -441,7 +441,7 @@ export class FileService {
 
       return {
         file,
-        text: documentTextPreviewService.extractText(file, absolutePath),
+        text: await documentPreviewWorkerService.extractText(file, absolutePath),
         contentType: preview.contentType,
         disposition: preview.disposition
       };
@@ -619,7 +619,7 @@ export class FileService {
   }
 
   serializeFilesWithPaths(ownerId, files, { includeDeleted = false } = {}) {
-    const rows = includeDeleted ? fileRepository.listByOwner(ownerId) : fileRepository.listActiveByOwner(ownerId);
+    const rows = fileRepository.listFoldersByOwner(ownerId, { includeDeleted });
     const byId = new Map(rows.map((row) => [row.id, row]));
     return files.map((file) => serializeFile(file, {
       path: this.buildPath(file, byId)
@@ -627,11 +627,11 @@ export class FileService {
   }
 
   serializeFilesForRequest(req, ownerId, files, { includeDeleted = false } = {}) {
-    const rows = includeDeleted ? fileRepository.listByOwner(ownerId) : fileRepository.listActiveByOwner(ownerId);
+    const rows = fileRepository.listFoldersByOwner(ownerId, { includeDeleted });
     const byId = new Map(rows.map((row) => [row.id, row]));
     return files.map((file) => serializeFile(file, {
       path: this.buildPath(file, byId),
-      ...accessPasswordService.serializeFileProtection(req, file)
+      ...accessPasswordService.serializeFileProtection(req, file, byId)
     }));
   }
 
@@ -644,9 +644,11 @@ export class FileService {
 
   buildPath(file, byId) {
     const path = [];
+    const visited = new Set();
     let cursor = file.type === "folder" ? file : byId.get(file.parent_id);
 
-    while (cursor) {
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id);
       if (cursor.type === "folder") {
         path.unshift({
           id: cursor.id,
@@ -669,7 +671,7 @@ function hasSelectedAncestor(file, selectedIds, ownerMaps) {
   if (!file?.parent_id) return false;
   let byId = ownerMaps.get(file.owner_id);
   if (!byId) {
-    byId = new Map(fileRepository.listActiveByOwner(file.owner_id).map((row) => [row.id, row]));
+    byId = new Map(fileRepository.listFoldersByOwner(file.owner_id).map((row) => [row.id, row]));
     ownerMaps.set(file.owner_id, byId);
   }
 
