@@ -39,7 +39,6 @@ export class NoteService {
 
   deleteNote(req, noteId) {
     const note = this.getOwnedNote(req.user, noteId);
-    accessPasswordService.assertNoteAccess(req, note);
     noteRepository.delete(req.user.id, noteId);
     return { deleted: true, id: noteId };
   }

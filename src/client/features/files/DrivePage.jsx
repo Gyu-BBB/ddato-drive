@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUpDown, ChevronLeft, Columns3, Copy, Download, Edit3, FolderOpen, FolderPlus, GalleryHorizontalEnd, KeyRound, LayoutGrid, List as ListIcon, LockKeyhole, MoveRight, RefreshCcw, RotateCcw, Search, Share2, Square, SquareCheckBig, Trash2, UnlockKeyhole, Upload } from "lucide-react";
+import { ArrowLeft, ChevronLeft, Copy, Download, Edit3, FolderOpen, FolderPlus, KeyRound, LockKeyhole, MoveRight, RefreshCcw, Share2, Square, SquareCheckBig, Trash2, UnlockKeyhole, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
@@ -7,7 +7,7 @@ import { ProgressBar } from "../../shared/components/ProgressBar.jsx";
 import { formatBytes, quotaPercent } from "../../shared/lib/formatBytes.js";
 import { adminApi } from "../admin/adminApi.js";
 import { useAuth } from "../auth/AuthProvider.jsx";
-import { Breadcrumbs } from "./components/Breadcrumbs.jsx";
+import { DriveChrome } from "./components/DriveChrome.jsx";
 import { DriveContextMenu } from "./components/DriveContextMenu.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { folderColorOptions } from "./components/FolderGlyph.jsx";
@@ -16,9 +16,10 @@ import { MoveDialog } from "./components/MoveDialog.jsx";
 import { PreviewPane } from "./components/PreviewPane.jsx";
 import { ShareDialog } from "./components/ShareDialog.jsx";
 import { UploadQueue } from "./components/UploadQueue.jsx";
-import { collectDroppedUploadEntries, hasDroppedFiles, uploadCollectedEntries } from "./dragDropUpload.js";
+import { collectDroppedUploadEntries, collectSelectedUploadEntries, hasDroppedFiles, uploadCollectedEntries } from "./dragDropUpload.js";
 import { sortFiles } from "./fileDisplay.js";
 import { filesApi } from "./filesApi.js";
+import { startDownload } from "./downloadTransfers.js";
 import { usePersistentUploadQueue } from "./usePersistentUploadQueue.js";
 
 const VIEW_STORAGE_KEY = "ddato_drive_view_mode";
@@ -29,12 +30,7 @@ const SIDE_PANEL_MIN_WIDTH = 300;
 const SIDE_PANEL_DEFAULT_WIDTH = 360;
 const SIDE_PANEL_MAX_WIDTH = 820;
 const INTERNAL_MOVE_TYPE = "application/x-ddato-drive-file-ids";
-const viewModes = [
-  { id: "icon", label: "아이콘 보기", icon: LayoutGrid },
-  { id: "list", label: "목록 보기", icon: ListIcon },
-  { id: "column", label: "컬럼 보기", icon: Columns3 },
-  { id: "gallery", label: "갤러리 보기", icon: GalleryHorizontalEnd }
-];
+const viewModeIds = ["icon", "list", "column", "gallery"];
 const sortOptions = [
   { id: "name", label: "이름" },
   { id: "size", label: "용량" },
@@ -45,14 +41,17 @@ const sortOptions = [
   { id: "location", label: "위치" }
 ];
 
-export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, homeSignal = 0, allowAdminPasswordReset = false }) {
+export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, homeSignal = 0, initialFolderStack = [], allowAdminPasswordReset = false }) {
   const { user, refresh } = useAuth();
   const inputRef = useRef(null);
-  const [folderStack, setFolderStack] = useState([]);
+  const folderInputRef = useRef(null);
+  const [folderStack, setFolderStack] = useState(() => initialFolderStack);
+  const previousHomeSignalRef = useRef(homeSignal);
   const [files, setFiles] = useState([]);
   const [knownFiles, setKnownFiles] = useState(() => new Map());
   const [owner, setOwner] = useState(null);
   const [usageBytes, setUsageBytes] = useState(0);
+  const [projectQuotaBytes, setProjectQuotaBytes] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [activeFileId, setActiveFileId] = useState("");
   const [query, setQuery] = useState("");
@@ -82,7 +81,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   });
   const [viewMode, setViewMode] = useState(() => {
     const saved = window.localStorage.getItem(VIEW_STORAGE_KEY);
-    return viewModes.some((mode) => mode.id === saved) ? saved : "icon";
+    return viewModeIds.includes(saved) ? saved : "icon";
   });
   const uploadQueue = usePersistentUploadQueue({
     accountId: user?.id || "",
@@ -120,6 +119,8 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   }, [selectedFile?.id]);
 
 	  useEffect(() => {
+	    if (previousHomeSignalRef.current === homeSignal) return;
+	    previousHomeSignalRef.current = homeSignal;
 	    if (trashMode) return;
 	    setFolderStack([]);
 	    setQuery("");
@@ -138,6 +139,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 	        setFiles(result.files);
 	        setOwner(result.owner);
 	        setUsageBytes(result.usageBytes);
+	        setProjectQuotaBytes(result.projectQuotaBytes ?? null);
 	        await refresh();
 	        setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
 	        setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
@@ -150,6 +152,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 	      setFiles(result.files);
 	      setOwner(result.owner);
 	      setUsageBytes(result.usageBytes);
+	      setProjectQuotaBytes(result.projectQuotaBytes ?? null);
 	      await refresh();
 	      setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
 	      setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
@@ -219,7 +222,6 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     }
     const items = compactTreeSelection(targets.filter(Boolean));
     if (!items.length) return;
-    if (!(await ensureFilesUnlocked(items, "삭제"))) return;
     const label = items.length === 1 ? `${items[0].name}을 삭제할까요?` : `${items.length}개 항목을 삭제할까요?`;
     if (!window.confirm(label)) return;
     await runAction(async () => {
@@ -283,11 +285,20 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     const selected = [...event.target.files];
     event.target.value = "";
     if (!selected.length) return;
-    if (!(await ensureCurrentFolderUnlocked("업로드"))) return;
-
-    for (const file of selected) {
-      await uploadQueue.enqueueUpload({ file, parentId, ownerId, name: file.name, displayName: file.name });
+    try {
+      if (!(await ensureCurrentFolderUnlocked("업로드"))) return;
+      await uploadEntries(collectSelectedUploadEntries(selected));
+    } catch (nextError) {
+      await loadFiles();
+      setError(nextError.message || "파일 또는 폴더를 업로드하지 못했습니다.");
     }
+  }
+
+  async function uploadEntries(entries) {
+    await uploadCollectedEntries({ entries, rootParentId: parentId, ownerId,
+      createFolder: filesApi.createFolder, uploadFile: uploadQueue.enqueueUpload,
+      onQueueAdd: uploadQueue.addTransientUpload, onQueueUpdate: uploadQueue.updateTransientUpload });
+    await loadFiles();
   }
 
   function handleDragEnter(event) {
@@ -333,26 +344,17 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     setError("");
 
     try {
-      if (!(await ensureCurrentFolderUnlocked("업로드"))) return;
       const entries = await collectDroppedUploadEntries(event.dataTransfer);
+      if (!(await ensureCurrentFolderUnlocked("업로드"))) return;
       if (!entries.files.length && !entries.directories.length) {
         setError("업로드할 파일이나 폴더를 찾지 못했습니다.");
         return;
       }
 
-      await uploadCollectedEntries({
-        entries,
-        rootParentId: parentId,
-        ownerId,
-        createFolder: filesApi.createFolder,
-        uploadFile: uploadQueue.enqueueUpload,
-        onQueueAdd: uploadQueue.addTransientUpload,
-        onQueueUpdate: uploadQueue.updateTransientUpload
-      });
-      await loadFiles();
+      await uploadEntries(entries);
     } catch (nextError) {
-      setError(nextError.message || "드롭한 항목을 업로드하지 못했습니다.");
       await loadFiles();
+      setError(nextError.message || "드롭한 항목을 업로드하지 못했습니다.");
     }
   }
 
@@ -382,14 +384,14 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     setError("");
     if (!(await ensureFilesUnlocked(itemsToDownload, "다운로드"))) return;
     if (itemsToDownload.length === 1) {
-      triggerUrlDownload(filesApi.downloadUrl(itemsToDownload[0].id));
+      const file = itemsToDownload[0];
+      void startDownload(filesApi.downloadUrl(file.id), file.type === "folder" ? `${file.name}.zip` : file.name);
       return;
     }
 
     setBusy(true);
     try {
-      const blob = await filesApi.downloadSelection(itemsToDownload.map((item) => item.id));
-      triggerBlobDownload(blob, "DDATO Drive 선택 항목.zip");
+      await startDownload("/api/files/download", "DDATO Drive 선택 항목.zip", { method: "POST", body: { ids: itemsToDownload.map(item => item.id) } });
     } catch (nextError) {
       setError(nextError.message || "선택 항목을 다운로드하지 못했습니다.");
     } finally {
@@ -428,10 +430,15 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 
   async function unlockFileForAction(file, actionLabel = "작업") {
     if (!file?.passwordProtected || file.passwordUnlocked) return true;
+    const canResetHere = allowAdminPasswordReset && file.ownPasswordProtected;
     const password = await requestPassword({
       title: "암호 입력",
-      body: `${file.name} 항목을 ${actionLabel}하려면 암호가 필요합니다.`,
-      confirmLabel: "잠금 해제"
+      body: canResetHere
+        ? `${file.name} 항목을 ${actionLabel}하려면 암호가 필요합니다. 암호를 잊었다면 관리자 권한으로 초기화할 수 있습니다.`
+        : `${file.name} 항목을 ${actionLabel}하려면 암호가 필요합니다. 암호를 잊었다면 관리자에게 2차 암호 초기화를 요청하세요.`,
+      confirmLabel: "잠금 해제",
+      recoverLabel: canResetHere ? "2차 암호 초기화" : "",
+      onRecover: canResetHere ? () => resetPasswordForFiles([file]) : null
     });
     if (!password) return false;
 
@@ -520,6 +527,14 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     const resolve = passwordDialog?.resolve;
     setPasswordDialog(null);
     resolve?.("");
+  }
+
+  function recoverPasswordDialog() {
+    const resolve = passwordDialog?.resolve;
+    const onRecover = passwordDialog?.onRecover;
+    setPasswordDialog(null);
+    resolve?.("");
+    void onRecover?.();
   }
 
   async function openMoveDialog(targets) {
@@ -804,6 +819,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
           { id: "select-all", label: allVisibleSelected ? "선택 해제" : "전체 선택", icon: allVisibleSelected ? Square : SquareCheckBig, disabled: !visibleFiles.length, onClick: run(toggleSelectAllVisible) },
           { id: "new-folder", label: "새 폴더", icon: FolderPlus, onClick: run(createFolder) },
           { id: "upload", label: "업로드", icon: Upload, onClick: run(() => inputRef.current?.click()) },
+          { id: "upload-folder", label: "폴더 업로드", icon: FolderPlus, onClick: run(() => folderInputRef.current?.click()) },
           { id: "back", label: "뒤로가기", icon: ArrowLeft, disabled: !folderStack.length, onClick: run(goBack) },
           { id: "refresh", label: "새로고침", icon: RefreshCcw, onClick: run(loadFiles) }
         ]
@@ -868,8 +884,14 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   }
 
   const quotaUser = owner || user;
-  const percent = quotaPercent(usageBytes, quotaUser?.quotaBytes);
-  const SelectToggleIcon = allVisibleSelected ? Square : SquareCheckBig;
+  const effectiveQuotaBytes = quotaUser?.quotaBytes ?? projectQuotaBytes;
+  const percent = quotaPercent(usageBytes, effectiveQuotaBytes);
+  const quotaLabel = quotaUser?.quotaBytes == null
+    ? `${formatBytes(usageBytes)} 사용 / 프로젝트 전체 ${formatBytes(projectQuotaBytes || 0)}`
+    : `${formatBytes(usageBytes)} 사용 / 전체 ${formatBytes(quotaUser.quotaBytes)}`;
+  const quotaCompactLabel = `${formatBytes(usageBytes)} / ${formatBytes(effectiveQuotaBytes || 0)}`;
+  const chromeTitle = folderStack.at(-1)?.name || ownerLabel || (trashMode ? "휴지통" : "홈");
+  const chromeSubtitle = isSearching ? `${visibleFiles.length}개 검색 결과` : `${visibleFiles.length}개 항목`;
 
   return (
     <div
@@ -877,72 +899,56 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       style={isSidePanelOpen ? { "--drive-side-panel-width": `${sidePanelWidth}px` } : undefined}
     >
       <section className="drive-main">
-        <div className="drive-toolbar">
-          <input ref={inputRef} type="file" multiple hidden onChange={handleUpload} />
-          <Button icon={SelectToggleIcon} iconOnly onClick={toggleSelectAllVisible} disabled={!visibleFiles.length}>{allVisibleSelected ? "선택 해제" : "전체 선택"}</Button>
-          {trashMode ? (
-            <>
-              <Button icon={RotateCcw} iconOnly variant="primary" onClick={() => restoreSelected()} disabled={!selectedFiles.length}>복원</Button>
-              <Button icon={Trash2} iconOnly variant="danger" onClick={() => purgeSelected()} disabled={!selectedFiles.length}>영구 삭제</Button>
-            </>
-          ) : (
-            <>
-              <Button icon={Upload} iconOnly variant="primary" onClick={() => inputRef.current?.click()}>업로드</Button>
-              <Button icon={FolderPlus} iconOnly onClick={createFolder}>새 폴더</Button>
-              <Button icon={Download} iconOnly onClick={downloadSelected} disabled={!selectedFiles.length}>다운로드</Button>
-              <Button icon={Share2} iconOnly onClick={() => openShareDialog(selectedFiles)} disabled={!selectedFiles.length}>공유</Button>
-              <Button icon={MoveRight} iconOnly onClick={() => openMoveDialog(selectedFiles)} disabled={!selectedFiles.length}>이동</Button>
-              <Button icon={LockKeyhole} iconOnly onClick={() => setPasswordForFiles(selectedFiles)} disabled={!selectedFiles.length}>암호 설정</Button>
-              {allowAdminPasswordReset ? (
-                <Button icon={KeyRound} iconOnly onClick={() => resetPasswordForFiles(selectedFiles)} disabled={!selectedFiles.some((file) => file.ownPasswordProtected)}>2차 암호 초기화</Button>
-              ) : null}
-              <Button icon={Edit3} iconOnly onClick={renameSelected} disabled={selectedFiles.length !== 1}>이름 변경</Button>
-              <Button icon={Trash2} iconOnly variant="danger" onClick={() => deleteSelected()} disabled={!selectedFiles.length}>삭제</Button>
-            </>
-          )}
-          <div className="view-switcher" role="group" aria-label="보기 방식">
-            {viewModes.map((mode) => {
-              const Icon = mode.icon;
-              return (
-                <button
-                  key={mode.id}
-                  type="button"
-                  className={viewMode === mode.id ? "view-option active" : "view-option"}
-                  title={mode.label}
-                  aria-label={mode.label}
-                  aria-pressed={viewMode === mode.id}
-                  onClick={() => changeViewMode(mode.id)}
-                >
-                  <Icon size={17} />
-                </button>
-              );
-            })}
-          </div>
-          <span className="toolbar-spacer" />
-          <label className="search-box">
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="파일, 폴더 검색" />
-          </label>
-          {isSearching ? <span className="search-scope-label">{visibleFiles.length}개 결과</span> : null}
-          <label className="sort-box" aria-label="정렬 기준">
-            <span>정렬</span>
-            <select value={sortField} onChange={(event) => changeSortField(event.target.value)}>
-              {sortOptions.map((option) => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <button className="sort-direction-button" type="button" onClick={toggleSortDirection} aria-label="정렬 방향 변경">
-            <ArrowUpDown size={16} />
-            <span>{sortDirection === "asc" ? "오름차순" : "내림차순"}</span>
-          </button>
-          <Button icon={RefreshCcw} iconOnly onClick={loadFiles} disabled={busy}>새로고침</Button>
-        </div>
-
-        <Breadcrumbs stack={trashMode ? [] : folderStack} onNavigate={(index) => {
-          if (trashMode) return;
-          setFolderStack(index < 0 ? [] : folderStack.slice(0, index + 1));
-        }} label={ownerLabel || (trashMode ? "휴지통" : "")} />
+        <DriveChrome
+          inputRef={inputRef}
+          folderInputRef={folderInputRef}
+          onUpload={handleUpload}
+          title={chromeTitle}
+          subtitle={chromeSubtitle}
+          folderStack={folderStack}
+          ownerLabel={ownerLabel}
+          trashMode={trashMode}
+          selectedCount={selectedFiles.length}
+          visibleCount={visibleFiles.length}
+          quotaLabel={quotaLabel}
+          quotaCompactLabel={quotaCompactLabel}
+          quotaPercent={percent}
+          allVisibleSelected={allVisibleSelected}
+          canAdminReset={allowAdminPasswordReset && selectedFiles.some((file) => file.ownPasswordProtected)}
+          canRename={selectedFiles.length === 1}
+          onNavigate={(index) => setFolderStack(index < 0 ? [] : folderStack.slice(0, index + 1))}
+          onGoBack={goBack}
+          onGoHome={() => {
+            setFolderStack([]);
+            setQuery("");
+            setSelectedIds([]);
+            setActiveFileId("");
+          }}
+          onSelectAll={toggleSelectAllVisible}
+          onClearSelection={() => setSelectedIds([])}
+          onCreateFolder={createFolder}
+          onDownload={downloadSelected}
+          onShare={() => openShareDialog(selectedFiles)}
+          onDuplicate={() => duplicateSelected(selectedFiles)}
+          onMove={() => openMoveDialog(selectedFiles)}
+          onSetPassword={() => setPasswordForFiles(selectedFiles)}
+          onAdminReset={() => resetPasswordForFiles(selectedFiles)}
+          onRename={renameSelected}
+          onDelete={() => deleteSelected()}
+          onRestore={() => restoreSelected()}
+          onPurge={() => purgeSelected()}
+          viewMode={viewMode}
+          onViewModeChange={changeViewMode}
+          query={query}
+          onQueryChange={setQuery}
+          searchResultCount={visibleFiles.length}
+          sortField={sortField}
+          onSortFieldChange={changeSortField}
+          sortDirection={sortDirection}
+          onSortDirectionChange={toggleSortDirection}
+          onRefresh={loadFiles}
+          busy={busy}
+        />
 
         {error ? <div className="error-banner page-error">{error}</div> : null}
 
@@ -1024,7 +1030,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 	            />
           )}
           <div className="panel-body quota-panel">
-            <ProgressBar value={percent} label={quotaUser?.quotaBytes == null ? `${formatBytes(usageBytes)} 사용 / 무제한` : `${formatBytes(usageBytes)} / ${formatBytes(quotaUser.quotaBytes)}`} />
+            <ProgressBar value={percent} label={quotaLabel} />
           </div>
         </aside>
       ) : null}
@@ -1053,7 +1059,9 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
           title={passwordDialog.title}
           body={passwordDialog.body}
           confirmLabel={passwordDialog.confirmLabel}
+          recoverLabel={passwordDialog.recoverLabel}
           onSubmit={submitPasswordDialog}
+          onRecover={recoverPasswordDialog}
           onClose={closePasswordDialog}
         />
       ) : null}

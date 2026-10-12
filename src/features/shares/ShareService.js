@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { archivePreviewService } from '../files/ArchivePreviewService.js';
 import { fail } from "../../core/errors.js";
 import { withTransaction } from "../../database/database.js";
 import { fileRepository } from "../files/FileRepository.js";
@@ -121,13 +122,16 @@ export class ShareService {
     return this.getDownloadTargetForItem(item);
   }
 
-  getPublicPreviewTarget(req, token) {
+  async getPublicPreviewTarget(req, token) {
     const { share, file } = this.getActiveShareAndFile(token);
     this.assertPublicSharedItemAccess(req, share, file);
     const preview = previewPolicy.getPreviewMode(file);
     if (!preview?.supported) fail(415, "Preview is not supported for this file.");
     const absolutePath = fileStorage.getAbsoluteFilePath(file);
 
+    if (preview.mode === 'archive') {
+      return { file, json: await archivePreviewService.inspect(absolutePath, file.original_name), contentType: preview.contentType, disposition: preview.disposition };
+    }
     if (preview.mode === "spreadsheet") {
       return {
         file,

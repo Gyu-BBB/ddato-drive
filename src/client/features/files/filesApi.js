@@ -2,6 +2,7 @@ import { apiRequest, formatApiErrorMessage } from "../../shared/api/apiClient.js
 import { ApiError } from "../../shared/api/apiError.js";
 
 export const filesApi = {
+  get: (id) => apiRequest(`/api/files/${encodeURIComponent(id)}`),
   list: ({ parentId = null, ownerId = "", search = "" } = {}) => {
     const params = new URLSearchParams();
     if (parentId) params.set("parentId", parentId);

@@ -7,10 +7,17 @@ import { fileRepository } from "./FileRepository.js";
 import { fileService } from "./FileService.js";
 import { uploadSessionStore } from "./UploadSessionStore.js";
 import { userRepository } from "../users/UserRepository.js";
+import { recordProjectTempGrowth } from "../../core/storageUsage.js";
+import { UploadTransferLimiter } from "./UploadTransferLimiter.js";
 
 const SESSION_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 
 export class ResumableUploadService {
+  constructor() {
+    this.chunkWrites = new Map();
+    this.transferLimiter = new UploadTransferLimiter(10);
+  }
+
   createSession(req, payload = {}) {
     const requestUser = req.user;
     const owner = fileService.resolveTargetOwner(requestUser, payload.ownerId);
@@ -54,7 +61,19 @@ export class ResumableUploadService {
     return this.serializeStatus(this.loadAuthorizedMetadata(requestUser, sessionId));
   }
 
-  appendChunk(requestUser, sessionId, { offset, buffer }) {
+  async appendChunk(requestUser, sessionId, payload) {
+    const id = this.normalizeSessionId(sessionId);
+    const previous = this.chunkWrites.get(id) || Promise.resolve();
+    const pending = previous.catch(() => {}).then(() => this.transferLimiter.run(requestUser.id, () => this.writeChunk(requestUser, id, payload)));
+    this.chunkWrites.set(id, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.chunkWrites.get(id) === pending) this.chunkWrites.delete(id);
+    }
+  }
+
+  async writeChunk(requestUser, sessionId, { offset, buffer }) {
     const metadata = this.loadAuthorizedMetadata(requestUser, sessionId);
     const chunk = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || "");
     const requestedOffset = Number(offset);
@@ -82,13 +101,16 @@ export class ResumableUploadService {
     }
 
     this.assertSessionQuota(metadata, chunk.length);
-    if (chunk.length) fs.appendFileSync(partialPath, chunk);
+    // Reserve growth before yielding so concurrent sessions cannot reuse capacity.
+    recordProjectTempGrowth(chunk.length);
+    if (chunk.length) await fs.promises.appendFile(partialPath, chunk);
     metadata.updatedAt = Date.now();
     this.writeMetadata(metadata);
     return this.serializeStatus(metadata);
   }
 
-  completeSession(req, sessionId) {
+  async completeSession(req, sessionId) {
+    await this.chunkWrites.get(sessionId)?.catch(() => {});
     const requestUser = req.user;
     const metadata = this.loadAuthorizedMetadata(requestUser, sessionId);
     const partialPath = this.partialPath(metadata);
@@ -112,12 +134,15 @@ export class ResumableUploadService {
     });
 
     fs.rmSync(this.sessionDir(metadata), { recursive: true, force: true });
+    uploadSessionStore.invalidate();
     return record;
   }
 
-  cancelSession(requestUser, sessionId) {
+  async cancelSession(requestUser, sessionId) {
+    await this.chunkWrites.get(sessionId)?.catch(() => {});
     const metadata = this.loadAuthorizedMetadata(requestUser, sessionId);
     fs.rmSync(this.sessionDir(metadata), { recursive: true, force: true });
+    uploadSessionStore.invalidate();
     return { canceled: true };
   }
 
@@ -144,6 +169,7 @@ export class ResumableUploadService {
       sizeBytes: metadata.sizeBytes,
       uploadedBytes,
       progress: metadata.sizeBytes ? Math.round((uploadedBytes / metadata.sizeBytes) * 100) : 100,
+      chunkSizeBytes: config.maxUploadChunkBytes,
       complete: uploadedBytes === metadata.sizeBytes
     };
   }
@@ -163,12 +189,18 @@ export class ResumableUploadService {
     fileService.assertProjectQuota(
       chunkBytes + uploadSessionStore.getPendingRemainingBytes({
         excludeSessionId: metadata.id
-      })
+      }),
+      { maxAgeMs: 1000 }
     );
   }
 
   writeMetadata(metadata) {
-    fs.writeFileSync(this.metadataPath(metadata), JSON.stringify(metadata, null, 2));
+    const metadataPath = this.metadataPath(metadata);
+    const oldSize = fs.existsSync(metadataPath) ? fs.statSync(metadataPath).size : 0;
+    const contents = JSON.stringify(metadata);
+    fs.writeFileSync(metadataPath, contents);
+    recordProjectTempGrowth(Math.max(0, Buffer.byteLength(contents) - oldSize));
+    uploadSessionStore.updateMetadata(metadata);
   }
 
   metadataPath(metadata) {

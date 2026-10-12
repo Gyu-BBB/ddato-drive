@@ -10,14 +10,16 @@ import { MediaViewerPage } from "../features/files/MediaViewerPage.jsx";
 import { PublicSharePage } from "../features/files/PublicSharePage.jsx";
 import { NotesPage } from "../features/notes/NotesPage.jsx";
 import { IconButton } from "../shared/components/IconButton.jsx";
+import { DownloadQueue } from "../features/files/components/DownloadQueue.jsx";
 
 export function App() {
   const publicShareToken = getPublicShareToken();
-  if (publicShareToken) return <PublicSharePage token={publicShareToken} />;
+  if (publicShareToken) return <><PublicSharePage token={publicShareToken} /><DownloadQueue /></>;
 
   return (
     <AuthProvider>
       <AppFrame />
+      <DownloadQueue />
     </AuthProvider>
   );
 }
@@ -29,9 +31,10 @@ function getPublicShareToken() {
 
 function AppFrame() {
   const { user, loading, logout } = useAuth();
-  const isAdminLoginPath = window.location.pathname === "/admin-login";
+  const isAdminLoginPath = ["/admin/login", "/admin-login"].includes(normalizePathname(window.location.pathname));
   const [view, setView] = useState("drive");
   const [homeSignal, setHomeSignal] = useState(0);
+  const [driveFolderStack, setDriveFolderStack] = useState([]);
   const [profileOpen, setProfileOpen] = useState(false);
 
   if (loading) {
@@ -54,8 +57,14 @@ function AppFrame() {
   const isAdmin = user.role === "admin";
 
   function goHome() {
+    setDriveFolderStack([]);
     setView("drive");
     setHomeSignal((value) => value + 1);
+  }
+
+  function openMediaLocation(file) {
+    setDriveFolderStack(Array.isArray(file.path) ? file.path.map(folder => ({ ...folder, type: 'folder' })) : []);
+    setView('drive');
   }
 
   return (
@@ -66,20 +75,20 @@ function AppFrame() {
         </button>
 
         <nav className="nav-stack" aria-label="주 메뉴">
-          <button className={view === "drive" ? "nav-item active" : "nav-item"} onClick={() => setView("drive")} title="드라이브" aria-label="드라이브">
+          <button data-section="drive" className={view === "drive" ? "nav-item active" : "nav-item"} onClick={goHome} title="홈" aria-label="홈으로 이동">
             <Folder size={18} />
           </button>
-          <button className={view === "media" ? "nav-item active" : "nav-item"} onClick={() => setView("media")} title="이미지/동영상" aria-label="이미지/동영상">
+          <button data-section="media" className={view === "media" ? "nav-item active" : "nav-item"} onClick={() => setView("media")} title="이미지/동영상" aria-label="이미지/동영상">
             <Images size={18} />
           </button>
-          <button className={view === "notes" ? "nav-item active" : "nav-item"} onClick={() => setView("notes")} title="메모장" aria-label="메모장">
+          <button data-section="notes" className={view === "notes" ? "nav-item active" : "nav-item"} onClick={() => setView("notes")} title="메모장" aria-label="메모장">
             <FileText size={18} />
           </button>
-          <button className={view === "trash" ? "nav-item active" : "nav-item"} onClick={() => setView("trash")} title="휴지통" aria-label="휴지통">
+          <button data-section="trash" className={view === "trash" ? "nav-item active" : "nav-item"} onClick={() => setView("trash")} title="휴지통" aria-label="휴지통">
             <Trash2 size={18} />
           </button>
           {isAdmin && (
-            <button className={view === "admin" ? "nav-item active" : "nav-item"} onClick={() => setView("admin")} title="관리" aria-label="관리">
+            <button data-section="admin" className={view === "admin" ? "nav-item active" : "nav-item"} onClick={() => setView("admin")} title="관리" aria-label="관리">
               <Shield size={18} />
             </button>
           )}
@@ -99,12 +108,17 @@ function AppFrame() {
           : view === "trash"
             ? <DrivePage trashMode ownerLabel="휴지통" />
             : view === "media"
-              ? <MediaViewerPage />
+              ? <MediaViewerPage onOpenLocation={openMediaLocation} />
               : view === "notes"
                 ? <NotesPage />
-                : <DrivePage homeSignal={homeSignal} />}
+                : <DrivePage homeSignal={homeSignal} initialFolderStack={driveFolderStack} allowAdminPasswordReset={isAdmin} />}
       </section>
       {profileOpen ? <ProfileDialog onClose={() => setProfileOpen(false)} /> : null}
     </main>
   );
+}
+
+function normalizePathname(pathname) {
+  const normalized = String(pathname || "/").replace(/\/+$/, "");
+  return normalized || "/";
 }

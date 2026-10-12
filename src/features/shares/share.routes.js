@@ -95,9 +95,9 @@ shareRouter.get("/shares/:token/items/:id/download", asyncRoute(async (req, res)
   });
 }));
 
-shareRouter.get("/shares/:token/preview", asyncRoute((req, res) => {
+shareRouter.get("/shares/:token/preview", asyncRoute(async (req, res) => {
   enforcePublicShareLimit(req);
-  const target = shareService.getPublicPreviewTarget(req, req.params.token);
+  const target = await shareService.getPublicPreviewTarget(req, req.params.token);
   auditLogger.record("share.public.preview", req, target.file.id, {
     token: maskToken(req.params.token),
     fileName: target.file.original_name
