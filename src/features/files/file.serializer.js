@@ -1,3 +1,5 @@
+import { TRASH_RETENTION_MS } from "../../shared/trashRetention.js";
+
 export function serializeFile(file, extra = {}) {
   return {
     id: file.id,
@@ -14,6 +16,7 @@ export function serializeFile(file, extra = {}) {
     createdAt: file.created_at,
     updatedAt: file.updated_at,
     deletedAt: file.deleted_at,
+    trashExpiresAt: file.deleted_at == null ? null : file.deleted_at + TRASH_RETENTION_MS,
     ...extra
   };
 }

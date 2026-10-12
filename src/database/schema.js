@@ -46,6 +46,14 @@ export function initializeSchema(db) {
     CREATE INDEX IF NOT EXISTS files_owner_parent_idx
       ON files(owner_id, parent_id, deleted_at);
 
+    CREATE INDEX IF NOT EXISTS files_trash_expiry_idx
+      ON files(deleted_at) WHERE deleted_at IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS files_parent_idx ON files(parent_id);
+
+    CREATE INDEX IF NOT EXISTS files_owner_folder_idx ON files(owner_id)
+      WHERE type = 'folder';
+
     CREATE UNIQUE INDEX IF NOT EXISTS files_owner_parent_name_active_idx
       ON files(owner_id, IFNULL(parent_id, ''), lower(original_name))
       WHERE deleted_at IS NULL;

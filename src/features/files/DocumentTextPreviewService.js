@@ -153,12 +153,23 @@ function readZipEntries(absolutePath) {
   const buffer = fs.readFileSync(absolutePath);
   const entries = parseZipEntries(buffer);
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
+  const texts = new Map();
+  let extractedBytes = 0;
 
   return {
     names: entries.map((entry) => entry.name),
     text(name) {
+      if (texts.has(name)) return texts.get(name);
       const entry = byName.get(name);
-      return entry ? entry.data.toString("utf8") : "";
+      if (!entry) return "";
+      const remaining = MAX_DOCUMENT_PREVIEW_BYTES - extractedBytes;
+      if (entry.sizeBytes > remaining) throw previewError("Document preview content is too large.", 413);
+      const data = readZipEntryData(buffer, entry.localHeaderOffset, entry.compressedSize, entry.method, remaining);
+      extractedBytes += data.length;
+      if (extractedBytes > MAX_DOCUMENT_PREVIEW_BYTES) throw previewError("Document preview content is too large.", 413);
+      const text = data.toString("utf8");
+      texts.set(name, text);
+      return text;
     }
   };
 }
@@ -178,6 +189,7 @@ function parseZipEntries(buffer) {
     const flags = buffer.readUInt16LE(offset + 8);
     const method = buffer.readUInt16LE(offset + 10);
     const compressedSize = buffer.readUInt32LE(offset + 20);
+    const sizeBytes = buffer.readUInt32LE(offset + 24);
     const nameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
@@ -187,7 +199,7 @@ function parseZipEntries(buffer) {
     if (!name.endsWith("/") && !(flags & 1)) {
       entries.push({
         name,
-        data: readZipEntryData(buffer, localHeaderOffset, compressedSize, method)
+        localHeaderOffset, compressedSize, sizeBytes, method
       });
     }
 
@@ -205,7 +217,7 @@ function findEndOfCentralDirectory(buffer) {
   return -1;
 }
 
-function readZipEntryData(buffer, localHeaderOffset, compressedSize, method) {
+function readZipEntryData(buffer, localHeaderOffset, compressedSize, method, maxOutputLength) {
   if (buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50) return Buffer.alloc(0);
 
   const nameLength = buffer.readUInt16LE(localHeaderOffset + 26);
@@ -214,7 +226,10 @@ function readZipEntryData(buffer, localHeaderOffset, compressedSize, method) {
   const compressed = buffer.subarray(start, start + compressedSize);
 
   if (method === 0) return compressed;
-  if (method === 8) return zlib.inflateRawSync(compressed);
+  if (method === 8) {
+    if (maxOutputLength <= 0) throw previewError("Document preview content is too large.", 413);
+    return zlib.inflateRawSync(compressed, { maxOutputLength });
+  }
   return Buffer.alloc(0);
 }
 
@@ -261,7 +276,11 @@ function parseWorksheetRowArrays(xml, sharedStrings) {
 }
 
 function countWorksheetRows(xml) {
-  return [...String(xml || "").matchAll(/<row\b/gi)].length;
+  let count = 0;
+  for (const _row of String(xml || "").matchAll(/<row\b/gi)) {
+    if (++count > MAX_SHEET_ROWS) break;
+  }
+  return count;
 }
 
 function parseOpenDocumentRows(xml) {

@@ -6,7 +6,7 @@ import { fileRepository } from "../files/FileRepository.js";
 import { serializeFile } from "../files/file.serializer.js";
 import { fileStorage } from "../files/FileStorage.js";
 import { previewPolicy } from "../files/PreviewPolicy.js";
-import { documentTextPreviewService } from "../files/DocumentTextPreviewService.js";
+import { documentPreviewWorkerService } from "../files/DocumentPreviewWorkerService.js";
 import { documentPdfPreviewService } from "../files/DocumentPdfPreviewService.js";
 import { documentPreviewJobService } from "../files/DocumentPreviewJobService.js";
 import { accessPasswordService } from "../protection/AccessPasswordService.js";
@@ -135,7 +135,7 @@ export class ShareService {
     if (preview.mode === "spreadsheet") {
       return {
         file,
-        json: documentTextPreviewService.extractSpreadsheetPreview(file, absolutePath),
+        json: await documentPreviewWorkerService.extractSpreadsheetPreview(file, absolutePath),
         contentType: preview.contentType,
         disposition: preview.disposition
       };
@@ -164,7 +164,7 @@ export class ShareService {
 
       return {
         file,
-        text: documentTextPreviewService.extractText(file, absolutePath),
+        text: await documentPreviewWorkerService.extractText(file, absolutePath),
         contentType: preview.contentType,
         disposition: preview.disposition
       };
@@ -220,8 +220,8 @@ export class ShareService {
   }
 
   getPublicFolderInfo(root, parentId = null) {
-    const rows = fileRepository.loadActiveTree(root.id);
     const targetId = String(parentId || "").trim() || root.id;
+    const rows = fileRepository.loadActiveAncestors(targetId, root.owner_id);
     const current = rows.find((row) => row.id === targetId && row.type === "folder");
     if (!current) fail(404, "Shared folder was not found.");
 
@@ -237,9 +237,9 @@ export class ShareService {
   getSharedTreeItem(root, itemId) {
     const requestedId = String(itemId || "").trim();
     if (!requestedId) fail(404, "Shared item was not found.");
-    const rows = fileRepository.loadActiveTree(root.id);
+    const rows = fileRepository.loadActiveAncestors(requestedId, root.owner_id);
     const item = rows.find((row) => row.id === requestedId);
-    if (!item) fail(404, "Shared item was not found.");
+    if (!item || !rows.some(row => row.id === root.id)) fail(404, "Shared item was not found.");
     return item;
   }
 
@@ -267,9 +267,11 @@ export class ShareService {
   buildFolderPath(root, current, rows) {
     const byId = new Map(rows.map((row) => [row.id, row]));
     const path = [];
+    const visited = new Set();
     let cursor = current;
 
-    while (cursor) {
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id);
       path.unshift(cursor);
       if (cursor.id === root.id) break;
       cursor = byId.get(cursor.parent_id);

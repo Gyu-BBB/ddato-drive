@@ -18,6 +18,7 @@ import { ShareDialog } from "./components/ShareDialog.jsx";
 import { UploadQueue } from "./components/UploadQueue.jsx";
 import { collectDroppedUploadEntries, collectSelectedUploadEntries, hasDroppedFiles, uploadCollectedEntries } from "./dragDropUpload.js";
 import { sortFiles } from "./fileDisplay.js";
+import { INTERNAL_MOVE_TYPE, hasInternalMove, readInternalMoveIds, compactMoveSelection, dragSelection, canDropSelection, createMoveDragImage } from "./dragMove.js";
 import { filesApi } from "./filesApi.js";
 import { startDownload } from "./downloadTransfers.js";
 import { usePersistentUploadQueue } from "./usePersistentUploadQueue.js";
@@ -29,7 +30,6 @@ const SIDE_PANEL_WIDTH_STORAGE_KEY = "ddato_drive_side_panel_width";
 const SIDE_PANEL_MIN_WIDTH = 300;
 const SIDE_PANEL_DEFAULT_WIDTH = 360;
 const SIDE_PANEL_MAX_WIDTH = 820;
-const INTERNAL_MOVE_TYPE = "application/x-ddato-drive-file-ids";
 const viewModeIds = ["icon", "list", "column", "gallery"];
 const sortOptions = [
   { id: "name", label: "이름" },
@@ -66,6 +66,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(true);
   const dragDepthRef = useRef(0);
   const currentDragIdsRef = useRef([]);
+  const dragImageCleanupRef = useRef(null);
   const selectionAnchorIdRef = useRef("");
   const sidePanelWidthRef = useRef(SIDE_PANEL_DEFAULT_WIDTH);
   const [sidePanelWidth, setSidePanelWidth] = useState(() => {
@@ -92,6 +93,8 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   });
 
   const parentId = folderStack.at(-1)?.id || null;
+
+  useEffect(() => () => dragImageCleanupRef.current?.(), []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => loadFiles(), query.trim() ? 180 : 0);
@@ -566,12 +569,13 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 
     if (!(await ensureFilesUnlocked(items, "이동"))) return false;
 
-    const movedIds = new Set(items.map((item) => item.id));
+    const movedIds = new Set();
     setBusy(true);
     setError("");
     try {
       for (const item of items) {
         const result = await filesApi.move(item.id, destinationParentId);
+        movedIds.add(item.id);
         rememberFiles([result.file]);
       }
       await loadFiles();
@@ -581,6 +585,9 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       setDropTargetId("");
       return true;
     } catch (nextError) {
+      await loadFiles();
+      setSelectedIds((ids) => ids.filter((id) => !movedIds.has(id)));
+      setActiveFileId((id) => movedIds.has(id) ? "" : id);
       setError(nextError.message || "항목을 이동하지 못했습니다.");
       setDropTargetId("");
       return false;
@@ -590,11 +597,11 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   }
 
   function handleItemDragStart(event, file) {
-    if (trashMode) {
+    if (trashMode || busy) {
       event.preventDefault();
       return;
     }
-    const items = selectedIds.includes(file.id) && selectedFiles.length ? selectedFiles : [file];
+    const items = dragSelection(file, selectedFiles);
     const ids = items.map((item) => item.id).filter(Boolean);
     if (!ids.length) {
       event.preventDefault();
@@ -607,38 +614,45 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(INTERNAL_MOVE_TYPE, JSON.stringify(ids));
     event.dataTransfer.setData("text/plain", items.map((item) => item.name).join(", "));
+    dragImageCleanupRef.current?.();
+    dragImageCleanupRef.current = createMoveDragImage(event.dataTransfer, items);
   }
 
   function handleItemDragEnd() {
+    dragImageCleanupRef.current?.();
+    dragImageCleanupRef.current = null;
     currentDragIdsRef.current = [];
     setDropTargetId("");
   }
 
   function handleItemDragOverFolder(event, target) {
-    if (trashMode || target.type !== "folder" || !hasInternalMove(event.dataTransfer)) return;
-    if (currentDragIdsRef.current.includes(target.id)) return;
+    if (trashMode || busy || !hasInternalMove(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
+    const items = currentDragIdsRef.current.map(id => knownFiles.get(id)).filter(Boolean);
+    if (!canDropSelection(items, target)) {
+      event.dataTransfer.dropEffect = "none";
+      setDropTargetId("");
+      return;
+    }
     event.dataTransfer.dropEffect = "move";
-    setDropTargetId(target.id);
+    setDropTargetId(target?.id || "home");
   }
 
   function handleItemDragLeaveFolder(event, target) {
     if (event.currentTarget.contains(event.relatedTarget)) return;
-    setDropTargetId((id) => id === target.id ? "" : id);
+    setDropTargetId((id) => id === (target?.id || "home") ? "" : id);
   }
 
   async function handleItemDropOnFolder(event, target) {
-    if (trashMode || target.type !== "folder" || !hasInternalMove(event.dataTransfer)) return;
+    if (trashMode || busy || !hasInternalMove(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
     const ids = readInternalMoveIds(event.dataTransfer, currentDragIdsRef.current);
-    currentDragIdsRef.current = [];
-    setDropTargetId("");
-    if (!ids.length || ids.includes(target.id)) return;
+    handleItemDragEnd();
     const items = ids.map((id) => knownFiles.get(id) || visibleFiles.find((file) => file.id === id)).filter(Boolean);
-    if (!items.length) return;
-    await moveItems(items, target.id);
+    if (!canDropSelection(items, target)) return;
+    await moveItems(items, target?.id || null);
   }
 
   function changeViewMode(nextMode) {
@@ -763,14 +777,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   }
 
   function compactTreeSelection(items) {
-    const selected = items.filter(Boolean);
-    const ids = new Set(selected.map((item) => item.id));
-    return selected.filter((item) => !hasSelectedAncestor(item, ids));
-  }
-
-  function hasSelectedAncestor(item, ids) {
-    const path = Array.isArray(item?.path) ? item.path : [];
-    return path.some((entry) => entry.id !== item.id && ids.has(entry.id));
+    return compactMoveSelection(items);
   }
 
 	  function openItemContextMenu(event, file) {
@@ -948,6 +955,10 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
           onSortDirectionChange={toggleSortDirection}
           onRefresh={loadFiles}
           busy={busy}
+          dropTargetId={dropTargetId}
+          onDragOverFolder={handleItemDragOverFolder}
+          onDragLeaveFolder={handleItemDragLeaveFolder}
+          onDropOnFolder={handleItemDropOnFolder}
         />
 
         {error ? <div className="error-banner page-error">{error}</div> : null}
@@ -987,7 +998,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
               sortField={sortField}
               sortDirection={sortDirection}
               onFilesSeen={rememberFiles}
-              canMove={!trashMode}
+              canMove={!trashMode && !busy}
               dropTargetId={dropTargetId}
               onDragStart={handleItemDragStart}
               onDragEnd={handleItemDragEnd}
@@ -1070,10 +1081,6 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   );
 }
 
-function hasInternalMove(dataTransfer) {
-  return Array.from(dataTransfer?.types || []).includes(INTERNAL_MOVE_TYPE);
-}
-
 function triggerUrlDownload(url) {
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -1097,15 +1104,6 @@ function triggerBlobDownload(blob, fileName) {
     anchor.remove();
   } finally {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-}
-
-function readInternalMoveIds(dataTransfer, fallbackIds = []) {
-  try {
-    const ids = JSON.parse(dataTransfer?.getData(INTERNAL_MOVE_TYPE) || "[]");
-    return Array.isArray(ids) ? ids.filter(Boolean) : fallbackIds;
-  } catch {
-    return fallbackIds;
   }
 }
 

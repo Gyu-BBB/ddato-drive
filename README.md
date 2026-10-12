@@ -17,7 +17,9 @@ This project was built for a personal domain setup such as `ddato.site`, but it 
 - File search across folders with path information
 - Sorting by name, size, extension, created date, updated date, and type
 - Folder colors and file/folder move, duplicate, rename, trash, restore, and purge
+- Trash items are permanently deleted after 30 days from deletion, checked at server startup and every minute; restored items are excluded. Cleanup removes stored files, preview caches, and share records and writes an admin audit log. A folder containing newer trash items is retained until those items expire.
 - Multi-select actions and context menus
+- Drag checked files/folders together onto a folder or a home/ancestor breadcrumb, with an item-count drag badge
 - Download files and stream folder ZIP downloads
 - Public share links with 1-hour or permanent expiration modes
 - Optional share password
@@ -250,6 +252,18 @@ This is a self-hosted application. Before exposing it publicly:
 - Use file/note/share passwords for sensitive items.
 - Back up `DDATO_DRIVE_DATA_DIR`, especially `drive.sqlite` and `storage/`.
 
+## Local Server Resource Policy
+
+- Account upload concurrency remains 10; ordinary file downloads remain streamed.
+- File metadata uses one folder lookup per response rather than reloading all files for each password check. Single-file protection checks only traverse ancestors, without caching authorization decisions.
+- Shared-folder navigation and item access validate ancestor membership instead of loading the complete shared subtree each time.
+- ZIP downloads use native CRC32, asynchronous file stats, and streaming backpressure; client disconnects stop generation.
+- Document/spreadsheet parsing runs in one short-lived worker at a time, with at most 32 waiting jobs, a 30-second timeout and a 128 MiB worker JavaScript heap limit. This is not a total server RAM cap. Embedded media is not decompressed for text previews, and extracted preview data is bounded.
+- PDF conversion runs one job at a time with a 32-job waiting queue and bounded completed-job history. File copying is asynchronous and the finished PDF is published atomically.
+- Archive inspection allows two active jobs and 32 waiting jobs, coalesces duplicate requests, and caches up to 32 results / 16 MiB of serialized data for 60 seconds. Full queues return a retryable service-busy message.
+- Background browser tabs pause document-preview polling. Read-only disk status can reuse measurements for five seconds; upload quota enforcement keeps its existing checks.
+- Trash cleanup yields between items so bulk expiry does not monopolize the request loop.
+
 ## Validation
 
 Run the production build and smoke test:
@@ -260,6 +274,9 @@ npm run smoke
 npm run test:transfers
 node scripts/upload-concurrency-test.js
 npm run test:folder-upload
+npm run test:trash-retention
+npm run test:drag-move
+npm run test:resources
 npm run test:zip-preview
 npm run test:archive-preview
 ```

@@ -70,7 +70,7 @@ export class FileStorage {
     this.deletePreviewFiles(file);
   }
 
-  deletePreviewFiles(file) {
+  deletePreviewFiles(file, { strict = false } = {}) {
     const previewPdfDir = path.join(config.previewCacheDir, "pdf");
     if (!file?.id || !fs.existsSync(previewPdfDir)) return;
 
@@ -80,7 +80,8 @@ export class FileStorage {
           fs.rmSync(path.join(previewPdfDir, entry), { force: true });
         }
       }
-    } catch {
+    } catch (error) {
+      if (strict && error.code !== "ENOENT") throw error;
       // Preview cache cleanup should not block the primary delete operation.
     }
   }

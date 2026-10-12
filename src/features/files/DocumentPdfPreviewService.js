@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -57,12 +58,13 @@ export class DocumentPdfPreviewService {
     const cachedPath = this.cachePath(file);
     if (fs.existsSync(cachedPath)) return cachedPath;
 
-    const workDir = fs.mkdtempSync(path.join(config.tempDir, "document-pdf-preview-"));
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "ddato-office-profile-"));
+    const workDir = await fsp.mkdtemp(path.join(config.tempDir, "document-pdf-preview-"));
+    let profileDir;
     const inputPath = path.join(workDir, path.basename(absolutePath));
 
     try {
-      fs.copyFileSync(absolutePath, inputPath);
+      profileDir = await fsp.mkdtemp(path.join(os.tmpdir(), "ddato-office-profile-"));
+      await fsp.copyFile(absolutePath, inputPath);
       await execFileAsync(officeBinary, [
         "--headless",
         "--nologo",
@@ -87,14 +89,14 @@ export class DocumentPdfPreviewService {
       const convertedPath = path.join(workDir, `${path.basename(inputPath, path.extname(inputPath))}.pdf`);
       if (!fs.existsSync(convertedPath)) return null;
 
-      fs.mkdirSync(path.dirname(cachedPath), { recursive: true });
-      fs.copyFileSync(convertedPath, cachedPath);
+      await fsp.mkdir(path.dirname(cachedPath), { recursive: true });
+      await fsp.rename(convertedPath, cachedPath);
       return cachedPath;
     } catch {
       return null;
     } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-      fs.rmSync(profileDir, { recursive: true, force: true });
+      await fsp.rm(workDir, { recursive: true, force: true });
+      if (profileDir) await fsp.rm(profileDir, { recursive: true, force: true });
     }
   }
 
@@ -113,7 +115,11 @@ export class DocumentPdfPreviewService {
   }
 }
 
+let officeBinaryCache = null;
+let officeBinaryCheckedAt = 0;
+
 function findOfficeBinary() {
+  if (officeBinaryCache !== null && Date.now() - officeBinaryCheckedAt < 60000) return officeBinaryCache;
   const candidates = [
     process.env.DDATO_DRIVE_OFFICE_BINARY,
     findInPath("soffice"),
@@ -123,7 +129,9 @@ function findOfficeBinary() {
     "/usr/local/bin/soffice"
   ].filter(Boolean);
 
-  return candidates.find((candidate) => fs.existsSync(candidate)) || "";
+  officeBinaryCache = candidates.find((candidate) => fs.existsSync(candidate)) || "";
+  officeBinaryCheckedAt = Date.now();
+  return officeBinaryCache;
 }
 
 function findInPath(binaryName) {

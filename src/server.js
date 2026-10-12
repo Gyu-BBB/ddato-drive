@@ -10,6 +10,7 @@ import { adminRouter } from "./features/admin/admin.routes.js";
 import { attachSession } from "./features/auth/auth.middleware.js";
 import { authRouter } from "./features/auth/auth.routes.js";
 import { filesRouter } from "./features/files/file.routes.js";
+import { trashCleanupService } from "./features/files/TrashCleanupService.js";
 import { healthRouter } from "./features/health/health.routes.js";
 import { notesRouter } from "./features/notes/note.routes.js";
 import { shareRouter } from "./features/shares/share.routes.js";
@@ -136,8 +137,11 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`  admin: ${config.adminId}`);
 });
 
+trashCleanupService.start();
+
 function shutdown() {
-  server.close(() => {
+  server.close(async () => {
+    await trashCleanupService.stop();
     closeDatabase();
     process.exit(0);
   });

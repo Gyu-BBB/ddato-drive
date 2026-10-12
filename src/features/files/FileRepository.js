@@ -36,6 +36,15 @@ export class FileRepository {
     `).all(ownerId);
   }
 
+  listExpiredTrashLeaves(cutoff, limit = 100) {
+    return getDb().prepare(`
+      SELECT f.* FROM files f
+      WHERE f.deleted_at IS NOT NULL AND f.deleted_at <= ?
+        AND NOT EXISTS (SELECT 1 FROM files child WHERE child.parent_id = f.id)
+      ORDER BY f.deleted_at, f.id LIMIT ?
+    `).all(cutoff, limit);
+  }
+
   search(ownerId, query) {
     const needle = `%${escapeLike(query)}%`;
     return getDb().prepare(`
@@ -55,6 +64,39 @@ export class FileRepository {
       FROM files
       WHERE owner_id = ? AND deleted_at IS NULL
     `).all(ownerId);
+  }
+
+  listFoldersByOwner(ownerId, { includeDeleted = false } = {}) {
+    return getDb().prepare(`
+      SELECT * FROM files WHERE owner_id = ? AND type = 'folder'
+        ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+    `).all(ownerId);
+  }
+
+  findAncestorProtection(file) {
+    if (!file.parent_id) return null;
+    return getDb().prepare(`
+      WITH RECURSIVE parents AS (
+        SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL
+        UNION
+        SELECT f.* FROM files f JOIN parents p ON f.id = p.parent_id
+        WHERE f.owner_id = ? AND f.deleted_at IS NULL
+          AND (p.access_password_hash IS NULL OR p.access_password_hash = '')
+      )
+      SELECT * FROM parents WHERE access_password_hash IS NOT NULL AND access_password_hash <> '' LIMIT 1
+    `).get(file.parent_id, file.owner_id, file.owner_id) || null;
+  }
+
+  loadActiveAncestors(fileId, ownerId) {
+    return getDb().prepare(`
+      WITH RECURSIVE parents AS (
+        SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL
+        UNION
+        SELECT f.* FROM files f JOIN parents p ON f.id = p.parent_id
+        WHERE f.owner_id = ? AND f.deleted_at IS NULL
+      )
+      SELECT * FROM parents
+    `).all(fileId, ownerId, ownerId);
   }
 
   listByOwner(ownerId) {

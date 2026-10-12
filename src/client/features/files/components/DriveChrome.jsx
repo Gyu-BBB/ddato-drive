@@ -88,7 +88,11 @@ export function DriveChrome({
   sortDirection,
   onSortDirectionChange,
   onRefresh,
-  busy
+  busy,
+  dropTargetId,
+  onDragOverFolder,
+  onDragLeaveFolder,
+  onDropOnFolder
 }) {
   const SelectIcon = allVisibleSelected ? Square : SquareCheckBig;
 
@@ -157,7 +161,9 @@ export function DriveChrome({
         </div>
       </div>
 
-      <Breadcrumbs stack={trashMode ? [] : folderStack} onNavigate={onNavigate} label={ownerLabel || (trashMode ? "휴지통" : "")} compact />
+      <Breadcrumbs stack={trashMode ? [] : folderStack} onNavigate={onNavigate} label={ownerLabel || (trashMode ? "휴지통" : "")} compact
+        canDrop={!trashMode && !busy} dropTargetId={dropTargetId} onDragOverFolder={onDragOverFolder}
+        onDragLeaveFolder={onDragLeaveFolder} onDropOnFolder={onDropOnFolder} />
 
       {selectedCount ? (
         <div className="selection-command-bar" role="toolbar" aria-label={`${selectedCount}개 선택 항목 작업`}>

@@ -6,7 +6,7 @@ export class SystemStatusService {
   getStatus(storageSummary, settings = {}) {
     const storage = {
       ...storageSummary,
-      ...getProjectStorageUsage()
+      ...getProjectStorageUsage({ maxAgeMs: 5000 })
     };
     const projectUsedBytes = storage.usedBytes;
     const projectTotalBytes = config.projectDiskQuotaBytes;
