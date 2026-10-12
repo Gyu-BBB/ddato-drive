@@ -2,14 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
 
-export function getProjectStorageUsage() {
+let cachedUsage = null;
+let measuredAt = 0;
+
+export function getProjectStorageUsage({ maxAgeMs = 0 } = {}) {
+  if (cachedUsage && maxAgeMs > 0 && Date.now() - measuredAt < maxAgeMs) return { ...cachedUsage };
   const storageBytes = directorySize(config.storageDir);
   const trashBytes = directorySize(config.trashDir);
   const previewCacheBytes = directorySize(config.previewCacheDir);
   const tempBytes = directorySize(config.tempDir);
   const dbBytes = fileSize(config.dbFile);
 
-  return {
+  cachedUsage = {
     storageBytes,
     trashBytes,
     previewCacheBytes,
@@ -17,6 +21,15 @@ export function getProjectStorageUsage() {
     dbBytes,
     usedBytes: storageBytes + trashBytes + previewCacheBytes + tempBytes + dbBytes
   };
+  measuredAt = Date.now();
+  return { ...cachedUsage };
+}
+
+export function recordProjectTempGrowth(bytes) {
+  if (!cachedUsage) return;
+  const growth = Math.max(0, Number(bytes) || 0);
+  cachedUsage.tempBytes += growth;
+  cachedUsage.usedBytes += growth;
 }
 
 export function fileSize(filePath) {

@@ -7,11 +7,12 @@ This project was built for a personal domain setup such as `ddato.site`, but it 
 ## Features
 
 - Google sign-in for normal users
-- Separate bootstrap admin login at `/admin-login`
+- Separate bootstrap admin login at `/admin/login` (`/admin-login` remains supported)
 - Admin user management, role changes, quota changes, login unlocks, and user deletion
 - Configurable default user quota, with a project-wide disk quota
-- File and folder upload, including drag-and-drop folder upload
+- File and folder upload from the toolbar, context menu, or drag-and-drop, preserving nested directories
 - Resumable upload sessions with pause, cancel, retry, and reload recovery
+- Up to 10 concurrent upload transfers per account, with live speed and transferred/total byte counters
 - Finder-style drive views: icon, list, column, and gallery
 - File search across folders with path information
 - Sorting by name, size, extension, created date, updated date, and type
@@ -20,13 +21,14 @@ This project was built for a personal domain setup such as `ddato.site`, but it 
 - Download files and stream folder ZIP downloads
 - Public share links with 1-hour or permanent expiration modes
 - Optional share password
-- File and note access passwords for preview, download, share, delete, move, rename, and duplicate governance
+- File and note access passwords for reading/editing and protected file operations; owners can delete locked items without the secondary password
 - Admin reset for forgotten file/note access passwords
-- Image/video viewer and memo page
+- Image/video viewer and memo page with context menus, explicit locked-media states, and clickable media folder paths
 - Document, text, image, audio, video, PDF, spreadsheet, and archive preview support where possible
 - Async document PDF preview jobs with text fallback
 - Admin audit logs and storage/system status dashboard
 - Cross-platform filename normalization for macOS upload and Windows download compatibility
+- ZIP, TAR and compressed TAR, 7z, RAR, CPIO, AR, CAB, and ISO directory previews with search and folder navigation
 
 ## Tech Stack
 
@@ -68,6 +70,9 @@ The backend follows a router -> service -> repository/storage/policy shape so la
 - A writable local storage directory
 - Optional: Caddy, Nginx, or another reverse proxy for domain/HTTPS usage
 - Optional: Google Cloud OAuth client for Google login
+- Python 3 and libarchive for non-ZIP archive previews; ZIP previews use the bundled Node dependency
+
+Non-ZIP preview support depends on the formats and compression filters in the installed libarchive. On macOS, `brew install python libarchive` provides the runtime; on Debian/Ubuntu, use `python3` and `libarchive13`. Optional `DDATO_DRIVE_PYTHON` and `DDATO_DRIVE_LIBARCHIVE` environment variables select custom executable/library paths. Archive preview tests and the TAR smoke fixture also require `bsdtar` (Debian/Ubuntu: `libarchive-tools`). Archive contents are listed without extracting files to disk.
 
 ## Quick Start
 
@@ -126,7 +131,7 @@ Important defaults:
 The bootstrap admin is created automatically when the server starts.
 
 ```text
-URL: /admin-login
+URL: /admin/login
 ID: admin
 Password: 518520
 ```
@@ -252,6 +257,11 @@ Run the production build and smoke test:
 ```bash
 npm run build
 npm run smoke
+npm run test:transfers
+node scripts/upload-concurrency-test.js
+npm run test:folder-upload
+npm run test:zip-preview
+npm run test:archive-preview
 ```
 
 The smoke test starts a temporary server, uses an isolated temporary data directory, and checks auth, admin controls, uploads, previews, sharing, quotas, trash, passwords, ZIP download, and cross-platform filename behavior.

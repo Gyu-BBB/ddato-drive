@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../../shared/api/apiError.js";
 import { filesApi } from "./filesApi.js";
+import { createSpeedMeter } from "../../shared/lib/transferProgress.js";
 import { getStoredUploads, removeStoredUpload, saveStoredUpload } from "./uploadQueueStore.js";
 
-const CHUNK_SIZE = 4 * 1024 * 1024;
+const CHUNK_SIZE = 8 * 1024 * 1024;
+const MAX_CONCURRENT_UPLOADS = 10;
 const RESUMABLE_STATUSES = new Set(["queued", "uploading"]);
 const RESTARTABLE_STATUSES = new Set(["queued", "paused", "failed"]);
 
@@ -14,6 +16,13 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
   const pausedIdsRef = useRef(new Set());
   const canceledIdsRef = useRef(new Set());
   const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    if (!enabled) return;
+    for (const item of uploads) {
+      if (item.status === "queued") startUpload(item);
+    }
+  }, [uploads, enabled]);
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -136,14 +145,13 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
   }
 
   function cancelUpload(id) {
-    canceledIdsRef.current.add(id);
-    const controller = controllersRef.current.get(id);
-    if (controller) {
-      controller.abort();
-      return;
-    }
     const item = getVisibleItem(id);
-    cancelStoredItem(item);
+    if (!item) return;
+    canceledIdsRef.current.add(id);
+    setUploadItems((items) => items.filter((entry) => entry.id !== id));
+    const controller = controllersRef.current.get(id);
+    controller?.abort();
+    void cancelStoredItem(item);
   }
 
   function pauseAllUploads() {
@@ -173,6 +181,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
 
   async function startUpload(initialItem) {
     if (!enabled || !initialItem || initialItem.transient || controllersRef.current.has(initialItem.id)) return;
+    if (!getVisibleItem(initialItem.id) || controllersRef.current.size >= MAX_CONCURRENT_UPLOADS) return;
     const controller = new AbortController();
     controllersRef.current.set(initialItem.id, controller);
     pausedIdsRef.current.delete(initialItem.id);
@@ -194,9 +203,13 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       }) || item;
 
       let uploadedBytes = session.uploadedBytes;
+      const initialBytes = uploadedBytes;
+      const speedMeter = createSpeedMeter();
+      const chunkSize = Math.max(1, Math.min(Number(session.chunkSizeBytes) || CHUNK_SIZE, 32 * 1024 * 1024));
+      let lastProgressAt = 0;
       while (uploadedBytes < item.sizeBytes) {
         throwIfAborted(controller.signal);
-        const end = Math.min(uploadedBytes + CHUNK_SIZE, item.sizeBytes);
+        const end = Math.min(uploadedBytes + chunkSize, item.sizeBytes);
         const chunk = item.file.slice(uploadedBytes, end);
         const baseOffset = uploadedBytes;
         const result = await filesApi.uploadSessionChunk(session.id, {
@@ -204,10 +217,15 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
           offset: uploadedBytes,
           signal: controller.signal,
           onProgress: (loaded) => {
+            const now = performance.now();
+            if (now - lastProgressAt < 200 && loaded < chunk.size) return;
+            lastProgressAt = now;
             const optimisticBytes = Math.min(item.sizeBytes, baseOffset + loaded);
             const progress = item.sizeBytes ? Math.round((optimisticBytes / item.sizeBytes) * 100) : 100;
             updateVisibleOnly(item.id, {
               uploadedBytes: optimisticBytes,
+              speedBytes: speedMeter(optimisticBytes - initialBytes),
+              speedUpdatedAt: Date.now(),
               progress,
               detail: `${progress}%`
             });
@@ -215,11 +233,11 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
         });
 
         uploadedBytes = result.session.uploadedBytes;
-        item = await updateStoredAndVisible(item.id, {
+        updateVisibleOnly(item.id, {
           uploadedBytes,
           progress: result.session.progress,
           detail: `${result.session.progress}%`
-        }) || item;
+        });
       }
 
       const completed = await filesApi.completeUploadSession(session.id, { signal: controller.signal });
@@ -274,6 +292,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
 
   async function cancelStoredItem(item) {
     if (!item) return;
+    setUploadItems((items) => items.filter((entry) => entry.id !== item.id));
     try {
       if (item.serverSessionId) await filesApi.cancelUploadSession(item.serverSessionId);
     } catch {

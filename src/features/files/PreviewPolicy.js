@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isArchiveName } from '../../shared/archiveFormats.js';
 
 const TEXT_EXTENSIONS = new Set([
   ".txt",
@@ -207,6 +208,9 @@ export class PreviewPolicy {
     }
     if (isSpreadsheetPreviewMime(mime) || SPREADSHEET_PREVIEW_EXTENSIONS.has(extension)) {
       return { supported: true, mode: "spreadsheet", contentType: "application/json; charset=utf-8", disposition: "inline" };
+    }
+    if (isArchiveName(name, mime)) {
+      return { supported: true, mode: 'archive', contentType: 'application/json; charset=utf-8', disposition: 'inline' };
     }
     if (isDocumentTextMime(mime) || DOCUMENT_TEXT_EXTENSIONS.has(extension)) {
       return { supported: true, mode: "document", contentType: "text/plain; charset=utf-8", disposition: "inline" };

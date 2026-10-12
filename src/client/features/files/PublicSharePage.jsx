@@ -9,6 +9,7 @@ import { FilePreviewContent, useFilePreview } from "./components/FilePreview.jsx
 import { FolderGlyph } from "./components/FolderGlyph.jsx";
 import { FullPreviewDialog } from "./components/FullPreviewDialog.jsx";
 import { shareApi } from "./shareApi.js";
+import { startDownload } from "./downloadTransfers.js";
 
 export function PublicSharePage({ token }) {
   const [info, setInfo] = useState(null);
@@ -53,7 +54,7 @@ export function PublicSharePage({ token }) {
       setPasswordDialogOpen(true);
       return;
     }
-    window.location.href = shareApi.publicDownloadUrl(token);
+    void startDownload(shareApi.publicDownloadUrl(token), info.file.type === "folder" ? `${info.file.name}.zip` : info.file.name);
   }
 
   async function unlockShare(password) {
@@ -174,7 +175,7 @@ function SharedFolderBrowser({ folder, token, onNavigate }) {
               <button
                 type="button"
                 className="public-folder-open"
-                onClick={() => item.type === "folder" ? onNavigate(item.id) : window.location.assign(shareApi.publicItemDownloadUrl(token, item.id))}
+                onClick={() => item.type === "folder" ? onNavigate(item.id) : startDownload(shareApi.publicItemDownloadUrl(token, item.id), item.name)}
               >
                 {item.type === "folder" ? <FolderGlyph color={item.folderColor} size={20} /> : <File size={20} />}
                 <span>
@@ -182,7 +183,7 @@ function SharedFolderBrowser({ folder, token, onNavigate }) {
                   <small>{item.type === "folder" ? "폴더" : formatBytes(item.sizeBytes)}</small>
                 </span>
               </button>
-              <a className="public-folder-download" href={shareApi.publicItemDownloadUrl(token, item.id)} aria-label={`${item.name} 다운로드`}>
+              <a className="public-folder-download" href={shareApi.publicItemDownloadUrl(token, item.id)} onClick={(event) => { event.preventDefault(); void startDownload(shareApi.publicItemDownloadUrl(token, item.id), item.type === "folder" ? `${item.name}.zip` : item.name); }} aria-label={`${item.name} 다운로드`}>
                 <Download size={17} />
               </a>
             </div>

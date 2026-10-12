@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -206,6 +206,13 @@ try {
   const notesAfterDelete = await request("/api/notes", { jar: userJar });
   assert(!notesAfterDelete.notes.some((note) => note.id === createdNote.note.id), "deleted note still listed");
 
+  const forgottenNote = await request('/api/notes', { method: 'POST', body: { title: 'Forgotten password note', content: 'private content' }, jar: userJar });
+  await request(`/api/notes/${forgottenNote.note.id}/password`, { method: 'PUT', body: { password: 'forgotten' }, jar: userJar });
+  const otherNoteDelete = await rawRequest(`/api/notes/${forgottenNote.note.id}`, { method: 'DELETE', jar: adminJar });
+  assert(otherNoteDelete.status === 404 || otherNoteDelete.status === 403, 'password-free note delete must still require ownership');
+  const forgottenNoteDelete = await request(`/api/notes/${forgottenNote.note.id}`, { method: 'DELETE', jar: userJar });
+  assert(forgottenNoteDelete.deleted === true, 'locked note should delete without its password');
+
   const form = new FormData();
   form.set("file", new Blob(["hello ddato drive"], { type: "text/plain" }), "hello.txt");
   const uploaded = await request("/api/files/upload", {
@@ -214,6 +221,25 @@ try {
     jar: userJar
   });
   assert(uploaded.file.name === "hello.txt", "upload name mismatch");
+
+  const resumed = await request("/api/files/upload-sessions", {
+    method: "POST", body: { name: "resume-check.txt", sizeBytes: 6, mimeType: "text/plain" }, jar: userJar
+  });
+  assert(resumed.session.chunkSizeBytes > 0, "server should advertise its chunk limit");
+  const chunkRequest = (offset, data) => fetch(`${baseUrl}/api/files/upload-sessions/${resumed.session.id}/chunk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "X-Upload-Offset": String(offset), cookie: Object.entries(userJar).map(([key, value]) => `${key}=${value}`).join("; ") },
+    body: data
+  });
+  const duplicates = await Promise.all([chunkRequest(0, "abc"), chunkRequest(0, "abc")]);
+  assert(duplicates.every(response => response.status === 200), "concurrent duplicate chunks should be idempotent");
+  const resumeStatus = await request(`/api/files/upload-sessions/${resumed.session.id}`, { jar: userJar });
+  assert(resumeStatus.session.uploadedBytes === 3, "resume offset should not duplicate concurrent bytes");
+  const lastChunk = await chunkRequest(3, "def");
+  assert(lastChunk.status === 200, "resuming upload should accept server offset");
+  const resumedFile = await request(`/api/files/upload-sessions/${resumed.session.id}/complete`, { method: "POST", jar: userJar });
+  const resumedDownload = await rawRequest(`/api/files/${resumedFile.file.id}/download`, { jar: userJar });
+  assert((await resumedDownload.text()) === "abcdef", "async resumed upload changed file contents");
 
   const macUploadName = "한글 문서.txt".normalize("NFD");
   const macExpectedName = "한글 문서.txt";
@@ -256,6 +282,21 @@ try {
   });
   assert(protectedFile.file.passwordProtected === true, "file password was not set");
   assert(protectedFile.file.passwordUnlocked === false, "file should lock immediately after password is set");
+  const lockedMediaForm = new FormData();
+  lockedMediaForm.set('file', new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB9kAAAAASUVORK5CYII=', 'base64')], { type: 'image/png' }), 'locked-media.png');
+  const lockedMediaUpload = await request('/api/files/upload', { method: 'POST', body: lockedMediaForm, jar: userJar });
+  await request(`/api/files/${lockedMediaUpload.file.id}/password`, { method: 'PUT', body: { password: 'media-secret' }, jar: userJar });
+  const mediaBeforeUnlock = await request('/api/files/media', { jar: userJar });
+  const lockedMediaItem = mediaBeforeUnlock.files.find(file => file.id === lockedMediaUpload.file.id);
+  assert(lockedMediaItem?.passwordProtected === true && lockedMediaItem.passwordUnlocked === false, 'media listing should identify locked files');
+  const blockedMediaPreview = await rawRequest(`/api/files/${lockedMediaUpload.file.id}/preview`, { jar: userJar });
+  assert(blockedMediaPreview.status === 423, 'locked media preview must remain protected');
+  await request(`/api/files/${lockedMediaUpload.file.id}/unlock`, { method: 'POST', body: { password: 'media-secret' }, jar: userJar });
+  const mediaAfterUnlock = await request('/api/files/media', { jar: userJar });
+  assert(mediaAfterUnlock.files.find(file => file.id === lockedMediaUpload.file.id)?.passwordUnlocked === true, 'media listing should refresh its unlock state');
+  const allowedMediaPreview = await rawRequest(`/api/files/${lockedMediaUpload.file.id}/preview`, { jar: userJar });
+  assert(allowedMediaPreview.status === 200, 'unlocked media should preview normally');
+  await request(`/api/files/${lockedMediaUpload.file.id}`, { method: 'DELETE', jar: userJar });
   const lockedPreview = await rawRequest(`/api/files/${uploaded.file.id}/preview`, { jar: userJar });
   assert(lockedPreview.status === 423, "locked file preview should require password");
   const lockedShareCreate = await rawRequest(`/api/files/${uploaded.file.id}/share`, {
@@ -279,7 +320,38 @@ try {
     method: "DELETE",
     jar: userJar
   });
-  assert(lockedDelete.status === 423, "locked file delete should require password");
+  assert(lockedDelete.status === 200, "locked file should be deletable without its password");
+  await request(`/api/trash/${uploaded.file.id}/restore`, { method: "POST", jar: userJar });
+  const restoredLockedPreview = await rawRequest(`/api/files/${uploaded.file.id}/preview`, { jar: userJar });
+  assert(restoredLockedPreview.status === 423, "restoring a locked file must preserve its password");
+  const unauthenticatedDelete = await rawRequest(`/api/files/${uploaded.file.id}`, { method: 'DELETE' });
+  assert(unauthenticatedDelete.status === 401, 'password-free deletion must still require login');
+
+  const deleteGuardId = `delete_guard_${Date.now()}`;
+  await request('/api/admin/users', { method: 'POST', body: { id: deleteGuardId, password: 'guard', quotaMb: 1 }, jar: adminJar });
+  const deleteGuardJar = {};
+  await request('/api/auth/login', { method: 'POST', body: { id: deleteGuardId, password: 'guard' }, jar: deleteGuardJar });
+  const foreignDelete = await rawRequest(`/api/files/${uploaded.file.id}`, { method: 'DELETE', jar: deleteGuardJar });
+  assert(foreignDelete.status === 403, 'password-free file delete must not permit another user to delete files');
+
+  const forgottenFolder = await request('/api/folders', { method: 'POST', body: { name: 'Forgotten folder password' }, jar: userJar });
+  const forgottenChildForm = new FormData();
+  forgottenChildForm.set('parentId', forgottenFolder.file.id);
+  forgottenChildForm.set('file', new Blob(['locked child']), 'child.txt');
+  const forgottenChild = await request('/api/files/upload', { method: 'POST', body: forgottenChildForm, jar: userJar });
+  const forgottenShare = await request(`/api/files/${forgottenFolder.file.id}/share`, { method: 'POST', body: { mode: 'permanent' }, jar: userJar });
+  await request(`/api/files/${forgottenChild.file.id}/password`, { method: 'PUT', body: { password: 'child-password' }, jar: userJar });
+  await request(`/api/files/${forgottenFolder.file.id}/password`, { method: 'PUT', body: { password: 'folder-password' }, jar: userJar });
+  const forgottenFolderDelete = await request(`/api/files/${forgottenFolder.file.id}`, { method: 'DELETE', jar: userJar });
+  assert(forgottenFolderDelete.deleted === 2, 'locked folder and locked children should delete without passwords');
+  const deletedFolderShare = await rawRequest(`/api/shares/${forgottenShare.share.token}`);
+  assert(deletedFolderShare.status === 404, 'deleting locked folders must revoke their shares');
+  await request(`/api/trash/${forgottenFolder.file.id}/restore`, { method: 'POST', jar: userJar });
+  const restoredChildDownload = await rawRequest(`/api/files/${forgottenChild.file.id}/download`, { jar: userJar });
+  assert(restoredChildDownload.status === 423, 'restored children must still require passwords to download');
+  await request(`/api/files/${forgottenFolder.file.id}`, { method: 'DELETE', jar: userJar });
+  const forgottenPurge = await request(`/api/trash/${forgottenFolder.file.id}`, { method: 'DELETE', jar: userJar });
+  assert(forgottenPurge.purged === 2, 'locked trash items must support permanent deletion without passwords');
   const lockedMoveTarget = await request("/api/folders", {
     method: "POST",
     body: { name: "Locked Move Target" },
@@ -545,6 +617,7 @@ try {
   assert(folderDownload.status === 200, "folder ZIP download failed");
   assert(String(folderDownload.headers.get("content-type") || "").includes("application/zip"), "folder download is not a ZIP");
   const folderZip = Buffer.from(await folderDownload.arrayBuffer());
+  assert(Number(folderDownload.headers.get("content-length")) === folderZip.length, "folder ZIP progress total does not match actual bytes");
   assert(folderZip.subarray(0, 2).toString("utf8") === "PK", "folder ZIP missing PK header");
   assert(folderZip.includes(Buffer.from("nested.txt")), "folder ZIP missing nested file name");
   assert(folderZip.includes(Buffer.from(nestedMacExpectedName, "utf8")), "folder ZIP missing normalized Korean file name");
@@ -560,6 +633,41 @@ try {
   assert(selectedZip.subarray(0, 2).toString("utf8") === "PK", "bulk selected ZIP missing PK header");
   assert(selectedZip.includes(Buffer.from("hello.txt")), "bulk selected ZIP missing selected file");
   assert(selectedZip.includes(Buffer.from("Documents/nested.txt")), "bulk selected ZIP missing selected folder child");
+  const archiveForm = new FormData();
+  archiveForm.set('file', new Blob([selectedZip], { type: 'application/zip' }), 'preview-archive.zip');
+  const archiveUpload = await request('/api/files/upload', { method: 'POST', body: archiveForm, jar: userJar });
+  const archivePreview = await request(`/api/files/${archiveUpload.file.id}/preview`, { jar: userJar });
+  assert(archivePreview.kind === 'zip', 'ZIP preview should return an archive listing');
+  assert(archivePreview.entries.some(entry => entry.path === 'Documents/nested.txt' && entry.sizeBytes === 20), 'ZIP preview should expose nested paths and sizes');
+  const archiveShare = await request(`/api/files/${archiveUpload.file.id}/share`, { method: 'POST', body: { mode: 'hour', password: 'zip-link-password' }, jar: userJar });
+  const lockedArchiveShare = await rawRequest(`/api/shares/${archiveShare.share.token}/preview`);
+  assert(lockedArchiveShare.status === 423, 'ZIP metadata must not bypass share password');
+  await request(`/api/shares/${archiveShare.share.token}/unlock`, { method: 'POST', body: { password: 'zip-link-password' } });
+  const sharedArchive = await request(`/api/shares/${archiveShare.share.token}/preview`);
+  assert(sharedArchive.kind === 'zip' && sharedArchive.entries.length === archivePreview.entries.length, 'shared ZIP preview should match private preview');
+  await request(`/api/files/${archiveUpload.file.id}/password`, { method: 'PUT', body: { password: 'zip-file-password' }, jar: userJar });
+  const lockedArchive = await rawRequest(`/api/files/${archiveUpload.file.id}/preview`, { jar: userJar });
+  assert(lockedArchive.status === 423, 'ZIP metadata must not bypass file lock');
+  await request(`/api/files/${archiveUpload.file.id}/unlock`, { method: 'POST', body: { password: 'zip-file-password' }, jar: userJar });
+  const unlockedArchive = await request(`/api/files/${archiveUpload.file.id}/preview`, { jar: userJar });
+  assert(unlockedArchive.kind === 'zip', 'unlocked ZIP should support preview');
+  const tarSource = path.join(dataDir, 'tar-fixture');
+  fs.mkdirSync(tarSource);
+  fs.writeFileSync(path.join(tarSource, 'tar-text.txt'), 'tar content');
+  const tarBytes = execFileSync('bsdtar', ['-cf', '-', '-C', tarSource, '.']);
+  const tarForm = new FormData();
+  tarForm.set('file', new Blob([tarBytes], { type: 'application/x-tar' }), 'preview.tar');
+  const tarUpload = await request('/api/files/upload', { method: 'POST', body: tarForm, jar: userJar });
+  const tarPreview = await request(`/api/files/${tarUpload.file.id}/preview`, { jar: userJar });
+  assert(tarPreview.entries.some(entry => entry.path === 'tar-text.txt' && entry.sizeBytes === 11), 'TAR private preview failed');
+  const tarShare = await request(`/api/files/${tarUpload.file.id}/share`, { method: 'POST', body: { mode: 'hour' }, jar: userJar });
+  const publicTarPreview = await request(`/api/shares/${tarShare.share.token}/preview`);
+  assert(publicTarPreview.entries.some(entry => entry.path === 'tar-text.txt'), 'TAR share preview failed');
+  await request(`/api/files/${tarUpload.file.id}/password`, { method: 'PUT', body: { password: 'tar-secret' }, jar: userJar });
+  const privateLockedTar = await rawRequest(`/api/files/${tarUpload.file.id}/preview`, { jar: userJar });
+  assert(privateLockedTar.status === 423, 'TAR listing must respect file passwords');
+  const publicLockedTar = await rawRequest(`/api/shares/${tarShare.share.token}/preview`);
+  assert(publicLockedTar.status === 423, 'TAR shared listing must respect file passwords');
   assert(countBufferOccurrences(selectedZip, Buffer.from("Documents/nested.txt")) === 2, "bulk selected ZIP duplicated a child selected with its folder");
 
   const permanentShare = await request(`/api/files/${uploaded.file.id}/share`, {

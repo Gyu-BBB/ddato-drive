@@ -13,19 +13,22 @@ export function DriveContextMenu({ menu, onClose }) {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") close();
     };
+    const handleScroll = (event) => {
+      if (!menuRef.current?.contains(event.target)) close();
+    };
 
     window.addEventListener("pointerdown", handlePointerDown, true);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("blur", close);
     window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", handleScroll, true);
 
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("blur", close);
       window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", handleScroll, true);
     };
   }, [menu, onClose]);
 
@@ -35,7 +38,7 @@ export function DriveContextMenu({ menu, onClose }) {
     <div
       ref={menuRef}
       className="context-menu"
-      style={{ left: menu.x, top: menu.y }}
+      style={{ left: menu.x, top: menu.y, maxHeight: `calc(100svh - ${menu.y + 8}px)` }}
       role="menu"
       onContextMenu={(event) => event.preventDefault()}
     >

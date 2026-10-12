@@ -9,7 +9,11 @@ export async function collectDroppedUploadEntries(dataTransfer) {
     return mergeCollected(await Promise.all(entries.map((entry) => collectEntry(entry, []))));
   }
 
-  const files = Array.from(dataTransfer?.files || []);
+  return collectSelectedUploadEntries(dataTransfer?.files);
+}
+
+export function collectSelectedUploadEntries(fileList) {
+  const files = Array.from(fileList || []);
   return {
     directories: [],
     files: files.map((file) => ({
@@ -146,7 +150,7 @@ function mergeCollected(collections) {
 function normalizePathSegments(value, fallbackName) {
   const segments = Array.isArray(value) ? value : String(value || fallbackName || "").split("/");
   return segments
-    .map((segment) => String(segment || "").normalize("NFKC").trim())
+    .map((segment) => String(segment || "").normalize("NFC").trim())
     .filter((segment) => segment && segment !== "." && segment !== "..");
 }
 

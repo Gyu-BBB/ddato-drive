@@ -1,4 +1,4 @@
-import { FolderOpen, KeyRound, RefreshCcw, Save, Shield, Trash2, UserCheck, UserPlus } from "lucide-react";
+import { FolderOpen, Gauge, KeyRound, RefreshCcw, Save, ScrollText, Shield, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
@@ -10,6 +10,13 @@ import { DrivePage } from "../files/DrivePage.jsx";
 import { AdminAuditLog } from "./AdminAuditLog.jsx";
 import { AdminSystemDashboard } from "./AdminSystemDashboard.jsx";
 import { adminApi } from "./adminApi.js";
+
+const adminTabs = [
+  { id: "system", label: "시스템", icon: Gauge },
+  { id: "users", label: "사용자 관리", icon: UsersRound },
+  { id: "files", label: "파일 열람", icon: FolderOpen },
+  { id: "audit", label: "감사 로그", icon: ScrollText }
+];
 
 export function AdminPage() {
   const { user: currentUser } = useAuth();
@@ -147,22 +154,46 @@ export function AdminPage() {
   return (
     <div className={isUsersTab ? "admin-layout users-mode" : "admin-layout"}>
       <section className="admin-main">
-        <div className="admin-toolbar">
-          <Button icon={RefreshCcw} onClick={load} disabled={busy}>새로고침</Button>
-          <div className="admin-tabs" role="tablist" aria-label="관리자 탭">
-            <button type="button" className={activeTab === "system" ? "active" : ""} onClick={() => setActiveTab("system")}>시스템</button>
-            <button type="button" className={activeTab === "users" ? "active" : ""} onClick={() => setActiveTab("users")}>사용자 관리</button>
-            <button type="button" className={activeTab === "files" ? "active" : ""} onClick={() => setActiveTab("files")}>파일 열람</button>
-            <button type="button" className={activeTab === "audit" ? "active" : ""} onClick={() => setActiveTab("audit")}>감사 로그</button>
+        <aside className="admin-navigation">
+          <div className="admin-navigation-title">
+            <span className="admin-navigation-icon"><Shield size={18} /></span>
+            <span>관리</span>
           </div>
-          <span className="toolbar-spacer" />
-          {system ? <span className="muted">프로젝트 {formatBytes(system.project.usedBytes)} / {formatBytes(system.project.totalBytes)}</span> : null}
-        </div>
-        {error ? <div className="error-banner page-error">{error}</div> : null}
-        {activeTab === "system" ? <SystemTab system={system} onRefresh={load} onSaveDefaultQuota={saveDefaultQuota} busy={busy} /> : null}
-        {activeTab === "users" ? <UsersTab users={users} selectedUser={selectedUser} onSelect={setSelectedId} onCreateUser={createUser} defaultQuotaMb={system?.settings?.defaultQuotaMb || 1024} /> : null}
-        {activeTab === "files" ? <FileAccessTab users={users} selectedUser={selectedUser} onSelect={setSelectedId} /> : null}
-        {isAuditTab ? <AuditTab logs={auditLogs} onRefresh={load} busy={busy} /> : null}
+          <nav className="admin-tabs" role="tablist" aria-label="관리자 탭">
+            {adminTabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)} aria-label={tab.label} title={tab.label}>
+                  <Icon size={17} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+          <div className="admin-navigation-footer">
+            {system ? (
+              <div>
+                <span>프로젝트 저장소</span>
+                <strong>{formatBytes(system.project.usedBytes)} / {formatBytes(system.project.totalBytes)}</strong>
+              </div>
+            ) : null}
+            <Button icon={RefreshCcw} onClick={load} disabled={busy}>새로고침</Button>
+          </div>
+        </aside>
+
+        <section className="admin-content">
+          <header className="admin-content-header">
+            <div>
+              <span>DDATO Drive</span>
+              <h1>{adminTabs.find((tab) => tab.id === activeTab)?.label}</h1>
+            </div>
+          </header>
+          {error ? <div className="error-banner page-error">{error}</div> : null}
+          {activeTab === "system" ? <SystemTab system={system} onRefresh={load} onSaveDefaultQuota={saveDefaultQuota} busy={busy} /> : null}
+          {activeTab === "users" ? <UsersTab users={users} selectedUser={selectedUser} onSelect={setSelectedId} onCreateUser={createUser} defaultQuotaMb={system?.settings?.defaultQuotaMb || 1024} /> : null}
+          {activeTab === "files" ? <FileAccessTab users={users} selectedUser={selectedUser} onSelect={setSelectedId} /> : null}
+          {isAuditTab ? <AuditTab logs={auditLogs} onRefresh={load} busy={busy} /> : null}
+        </section>
       </section>
 
       {isUsersTab && selectedUser ? (
@@ -172,6 +203,9 @@ export function AdminPage() {
               <Shield size={18} />
               <span>{selectedUser.id}</span>
             </div>
+            <button className="admin-user-panel-close" type="button" onClick={() => setSelectedId("")} aria-label="사용자 상세 닫기" title="닫기">
+              <X size={17} />
+            </button>
           </div>
           <div className="panel-body quota-editor">
             <ProgressBar value={quotaPercent(selectedUser.usageBytes, selectedUser.quotaBytes)} label={selectedUser.quotaBytes == null ? `${formatBytes(selectedUser.usageBytes)} 사용 / 무제한` : `${formatBytes(selectedUser.usageBytes)} / ${formatBytes(selectedUser.quotaBytes)}`} />

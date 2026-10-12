@@ -19,6 +19,7 @@ import { documentPreviewJobService } from "./DocumentPreviewJobService.js";
 import { uploadSessionStore } from "./UploadSessionStore.js";
 import { shareService } from "../shares/ShareService.js";
 import { accessPasswordService } from "../protection/AccessPasswordService.js";
+import { archivePreviewService } from './ArchivePreviewService.js';
 
 const FOLDER_COLORS = new Set(["yellow", "blue", "green", "pink", "purple", "orange", "gray"]);
 
@@ -37,6 +38,7 @@ export class FileService {
           total: files.length
         },
         usageBytes: fileRepository.getUsageBytes(owner.id),
+        projectQuotaBytes: config.projectDiskQuotaBytes,
         files: this.serializeFilesForRequest(req, owner.id, files)
       };
     }
@@ -48,6 +50,7 @@ export class FileService {
       owner: serializeUser(owner),
       parentId: normalizedParentId,
       usageBytes: fileRepository.getUsageBytes(owner.id),
+      projectQuotaBytes: config.projectDiskQuotaBytes,
       files: this.serializeFilesForRequest(req, owner.id, fileRepository.list(owner.id, normalizedParentId))
     };
   }
@@ -72,6 +75,7 @@ export class FileService {
     return {
       owner: serializeUser(owner),
       usageBytes: fileRepository.getUsageBytes(owner.id),
+      projectQuotaBytes: config.projectDiskQuotaBytes,
       search: {
         query,
         kind: mediaKind || "all",
@@ -89,6 +93,7 @@ export class FileService {
       owner: serializeUser(owner),
       parentId: null,
       usageBytes: fileRepository.getUsageBytes(owner.id),
+      projectQuotaBytes: config.projectDiskQuotaBytes,
       files: this.serializeFilesForRequest(req, owner.id, fileRepository.listTrash(owner.id), { includeDeleted: true })
     };
   }
@@ -276,7 +281,6 @@ export class FileService {
     const file = this.getAccessibleFile(requestUser, fileId);
     const rows = fileRepository.loadActiveTree(file.id);
     if (!rows.length) fail(404, "File was not found.");
-    accessPasswordService.assertFileTreeAccess(req, file, rows);
 
     withTransaction(() => {
       fileRepository.markDeleted(rows);
@@ -395,13 +399,16 @@ export class FileService {
     };
   }
 
-  getPreviewStreamTarget(req, fileId) {
+  async getPreviewStreamTarget(req, fileId) {
     const file = this.getAccessibleFile(req.user, fileId);
     accessPasswordService.assertFileAccess(req, file);
     const preview = previewPolicy.getPreviewMode(file);
     if (!preview?.supported) fail(415, "Preview is not supported for this file.");
     const absolutePath = fileStorage.getAbsoluteFilePath(file);
 
+    if (preview.mode === 'archive') {
+      return { file, json: await archivePreviewService.inspect(absolutePath, file.original_name), contentType: preview.contentType, disposition: preview.disposition };
+    }
     if (preview.mode === "spreadsheet") {
       return {
         file,
@@ -505,8 +512,12 @@ export class FileService {
     fail(400, "Folder color is not supported.");
   }
 
-  assertProjectQuota(additionalBytes = 0) {
-    const storage = getProjectStorageUsage();
+  assertProjectQuota(additionalBytes = 0, { maxAgeMs = 0 } = {}) {
+    let storage = getProjectStorageUsage({ maxAgeMs });
+    // Reconcile near capacity, including changes made outside upload sessions.
+    if (maxAgeMs && storage.usedBytes + Number(additionalBytes || 0) + 64 * 1024 * 1024 >= config.projectDiskQuotaBytes) {
+      storage = getProjectStorageUsage();
+    }
     const nextBytes = Number(storage.usedBytes || 0) + Number(additionalBytes || 0);
     if (nextBytes > config.projectDiskQuotaBytes) {
       fail(413, "프로젝트 저장 공간이 부족합니다.", {

@@ -100,6 +100,15 @@ export class ZipArchiveService {
   }
 
   async writeZipStream(writable, entries) {
+    let predictedOffset = 0;
+    const predictedCentral = [];
+    for (const entry of entries) {
+      predictedCentral.push({ ...entry, localOffset: predictedOffset, crc: 0, dosTime: entry.dos.dosTime, dosDate: entry.dos.dosDate });
+      predictedOffset += streamingLocalHeader(entry).length + entry.size + dataDescriptor(0, entry.size, entryNeedsZip64(entry)).length;
+    }
+    const predictedCentralSize = predictedCentral.reduce((total, entry) => total + centralHeader(entry).length, 0);
+    const predictedZip64 = archiveNeedsZip64(entries.length, predictedCentralSize, predictedOffset);
+    writable.setHeader?.("Content-Length", predictedOffset + predictedCentralSize + 22 + (predictedZip64 ? 76 : 0));
     let offset = 0;
     const centralEntries = [];
 

@@ -1,6 +1,8 @@
 import { File, FileAudio, FileText, FileVideo, Image } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FolderGlyph } from "./FolderGlyph.jsx";
+import { ArchivePreview } from './ArchivePreview.jsx';
+import { isArchiveName } from '../../../../shared/archiveFormats.js';
 
 const TEXT_EXTENSIONS = new Set([
   ".txt", ".text", ".md", ".markdown", ".mdown",
@@ -97,7 +99,7 @@ export function useFilePreview(file, loadBlob, getPreviewUrl = null, loadPreview
       };
     }
 
-    if (!isTextFile(file) && !isSpreadsheetFile(file) && getPreviewUrl) {
+    if (!isArchiveFile(file) && !isTextFile(file) && !isSpreadsheetFile(file) && getPreviewUrl) {
       setState({ loading: false, url: getPreviewUrl(file), text: "", spreadsheet: null, error: "", message: "", requiresPassword: false });
       return () => {
         active = false;
@@ -108,6 +110,11 @@ export function useFilePreview(file, loadBlob, getPreviewUrl = null, loadPreview
     loadBlob(file)
       .then(async (blob) => {
         if (!active) return;
+        if (isArchiveFile(file)) {
+          const archive = JSON.parse(await blob.text());
+          if (active) setState({ loading: false, url: '', text: '', archive, error: '', requiresPassword: false });
+          return;
+        }
         if (isSpreadsheetFile(file)) {
           setState({ loading: false, url: "", text: "", spreadsheet: JSON.parse(await blob.text()), error: "", message: "", requiresPassword: false });
           return;
@@ -148,6 +155,7 @@ export function FilePreviewContent({ file, preview, onUnlock = null }) {
     );
   }
   if (preview.loading) return <span className="muted">{preview.message || "불러오는 중"}</span>;
+  if (isArchiveFile(file)) return <ArchivePreview key={file.id} archive={preview.archive} />;
   if (isSpreadsheetFile(file)) return <SpreadsheetPreview preview={preview.spreadsheet} />;
   if (preview.text) return <pre className="gallery-text-preview">{preview.text}</pre>;
   if (isTextFile(file)) return <pre className="gallery-text-preview">{preview.text || ""}</pre>;
@@ -160,7 +168,11 @@ export function FilePreviewContent({ file, preview, onUnlock = null }) {
 }
 
 export function canInlinePreview(file) {
-  return isTextFile(file) || isSpreadsheetFile(file) || isImageFile(file) || isVideoFile(file) || isAudioFile(file) || isPdfFile(file) || isDocumentFile(file);
+  return isArchiveFile(file) || isTextFile(file) || isSpreadsheetFile(file) || isImageFile(file) || isVideoFile(file) || isAudioFile(file) || isPdfFile(file) || isDocumentFile(file);
+}
+
+export function isArchiveFile(file) {
+  return isArchiveName(file?.name, file?.mimeType);
 }
 
 export function isTextFile(file) {

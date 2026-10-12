@@ -2,11 +2,27 @@ import { CheckCircle2, ChevronDown, ChevronUp, Loader2, PauseCircle, PlayCircle,
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../../../shared/lib/formatBytes.js";
 
-export function UploadQueue({ uploads, onCancel, onPause, onResume, onRetry, onCancelAll, onPauseAll, onResumeAll, onClearCompleted }) {
+export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, onResume, onRetry, onCancelAll, onPauseAll, onResumeAll, onClearCompleted }) {
+  const downloading = direction === "download";
+  const title = downloading ? "다운로드" : "업로드";
   const [collapsed, setCollapsed] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const previousCountRef = useRef(uploads.length);
+  const [clock, setClock] = useState(Date.now());
   const summary = useMemo(() => summarizeUploads(uploads), [uploads]);
+  const totals = uploads.reduce((result, item) => {
+    result.loaded += Number(item.uploadedBytes) || (item.status === "done" ? Number(item.sizeBytes) || 0 : 0);
+    result.size += Number(item.sizeBytes) || 0;
+    result.unknown ||= item.sizeBytes == null;
+    if (item.status === "uploading" && !(item.speedUpdatedAt && clock - item.speedUpdatedAt > 1500)) result.speed += Number(item.speedBytes) || 0;
+    return result;
+  }, { loaded: 0, size: 0, speed: 0, unknown: false });
+
+  useEffect(() => {
+    if (!summary.active) return;
+    const timer = setInterval(() => setClock(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, [summary.active]);
 
   useEffect(() => {
     if (uploads.length && (previousCountRef.current === 0 || uploads.length > previousCountRef.current || summary.active)) {
@@ -19,44 +35,49 @@ export function UploadQueue({ uploads, onCancel, onPause, onResume, onRetry, onC
   if (!uploads.length || dismissed) return null;
 
   return (
-    <section className={collapsed ? "upload-queue-card collapsed" : "upload-queue-card"} aria-label="업로드 상태">
+    <section className={`${collapsed ? "upload-queue-card collapsed" : "upload-queue-card"}${downloading ? " download-queue-card" : ""}`} aria-label={`${title} 상태`}>
       <div className="upload-card-header">
         <button className="upload-card-toggle" type="button" onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>
           <span className="upload-card-title">
             {summary.failed ? <XCircle size={18} color="var(--dd-danger)" /> : summary.uploading ? <Loader2 className="upload-spinner" size={18} /> : <UploadCloud size={18} />}
             <span>
-              <strong>업로드</strong>
-              <span>{summary.label}</span>
+              <strong>{title}</strong>
+              <span>{downloading ? summary.label.replace("업로드", "다운로드") : summary.label}</span>
             </span>
           </span>
           <span className="upload-card-count">{summary.total}개</span>
           {collapsed ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
         </button>
         <div className="upload-card-actions" aria-label="전체 업로드 제어">
-          {summary.canPause ? (
+          {summary.canPause && onPauseAll ? (
             <button className="upload-action" type="button" onClick={onPauseAll} title="전체 일시정지" aria-label="전체 업로드 일시정지">
               <PauseCircle size={15} />
             </button>
           ) : null}
-          {summary.canResume ? (
+          {summary.canResume && onResumeAll ? (
             <button className="upload-action" type="button" onClick={onResumeAll} title="전체 재개" aria-label="전체 업로드 재개">
               <PlayCircle size={15} />
             </button>
           ) : null}
-          {summary.canCancel ? (
-            <button className="upload-action danger" type="button" onClick={onCancelAll} title="전체 취소" aria-label="전체 업로드 취소">
+          {summary.canCancel && (!downloading || summary.active) ? (
+            <button className="upload-action danger" type="button" onClick={onCancelAll} title="전체 취소" aria-label={`전체 ${title} 취소`}>
               <X size={15} />
             </button>
           ) : null}
-          {summary.done ? (
-            <button className="upload-action" type="button" onClick={onClearCompleted} title="완료된 내용 지우기" aria-label="완료된 업로드 내용 지우기">
+          {summary.done || (downloading && summary.failed) ? (
+            <button className="upload-action" type="button" onClick={onClearCompleted} title="완료된 내용 지우기" aria-label={`완료된 ${title} 내용 지우기`}>
               <Trash2 size={15} />
             </button>
           ) : null}
-          <button className="upload-action" type="button" onClick={() => setDismissed(true)} disabled={Boolean(summary.active)} title={summary.active ? "업로드 진행 중에는 닫을 수 없습니다" : "닫기"} aria-label="업로드 카드 닫기">
+          <button className="upload-action" type="button" onClick={() => setDismissed(true)} disabled={Boolean(summary.active)} title={summary.active ? `${title} 진행 중에는 닫을 수 없습니다` : "닫기"} aria-label={`${title} 카드 닫기`}>
             <X size={15} />
           </button>
         </div>
+      </div>
+
+      <div className="transfer-summary transfer-metrics">
+        {formatBytes(totals.loaded)} / {totals.unknown ? "크기 확인 중" : formatBytes(totals.size)}
+        {summary.active ? ` · ${formatBytes(totals.speed)}/s` : ""}
       </div>
 
       {collapsed && summary.active ? (
@@ -73,11 +94,12 @@ export function UploadQueue({ uploads, onCancel, onPause, onResume, onRetry, onC
                 {statusIcon(upload.status)}
                 <span>
                   <strong>{upload.name || upload.displayName}</strong>
-                  <span>{upload.error || upload.detail || uploadLabel(upload)}</span>
+                  <span>{upload.error || (downloading ? uploadLabel(upload).replace("업로드됨", "다운로드됨") : upload.detail || uploadLabel(upload))}</span>
+                  <span className="transfer-metrics">{formatBytes(Number(upload.uploadedBytes) || (upload.status === "done" ? upload.sizeBytes : 0))} / {upload.sizeBytes == null ? "크기 확인 중" : formatBytes(upload.sizeBytes)}{upload.status === "uploading" ? ` · ${formatBytes(upload.speedUpdatedAt && clock - upload.speedUpdatedAt > 1500 ? 0 : upload.speedBytes || 0)}/s` : ""}</span>
                 </span>
               </div>
               <div className="upload-row-actions">
-                {rowActions(upload, { onCancel, onPause, onResume, onRetry })}
+                {rowActions(upload, { onCancel, onPause, onResume, onRetry, title })}
               </div>
               {upload.status === "uploading" ? (
                 <div className="upload-progress" aria-hidden="true">
@@ -145,10 +167,10 @@ function rowActions(upload, actions) {
   if (upload.status === "uploading" || upload.status === "queued") {
     return (
       <>
-        <button className="upload-action" type="button" onClick={() => actions.onPause(upload.id)} title="일시정지" aria-label={`${label} 업로드 일시정지`}>
+        {actions.onPause ? <button className="upload-action" type="button" onClick={() => actions.onPause(upload.id)} title="일시정지" aria-label={`${label} 업로드 일시정지`}>
           <PauseCircle size={15} />
-        </button>
-        <button className="upload-action danger" type="button" onClick={() => actions.onCancel(upload.id)} title="취소" aria-label={`${label} 업로드 취소`}>
+        </button> : null}
+        <button className="upload-action danger" type="button" onClick={() => actions.onCancel(upload.id)} title="취소" aria-label={`${label} ${actions.title} 취소`}>
           <X size={15} />
         </button>
       </>
@@ -168,7 +190,7 @@ function rowActions(upload, actions) {
     );
   }
 
-  if (upload.status === "failed") {
+  if (upload.status === "failed" && actions.onRetry) {
     return (
       <>
         <button className="upload-action" type="button" onClick={() => actions.onRetry(upload.id)} title="재시도" aria-label={`${label} 업로드 재시도`}>

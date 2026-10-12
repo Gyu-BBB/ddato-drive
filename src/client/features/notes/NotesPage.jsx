@@ -1,12 +1,17 @@
-import { FileText, Loader2, LockKeyhole, Plus, RefreshCcw, Search, Trash2, UnlockKeyhole } from "lucide-react";
+import { FileText, Loader2, LockKeyhole, MoreHorizontal, Plus, RefreshCcw, Search, Trash2, UnlockKeyhole } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
 import { PasswordDialog } from "../../shared/components/PasswordDialog.jsx";
 import { formatDate } from "../../shared/lib/dates.js";
 import { notesApi } from "./notesApi.js";
+import { noteContextMenu } from './noteContextMenu.js';
+import { DriveContextMenu } from '../files/components/DriveContextMenu.jsx';
+import { useAuth } from '../auth/AuthProvider.jsx';
+import { adminApi } from '../admin/adminApi.js';
 
 export function NotesPage() {
+  const { user } = useAuth();
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
@@ -18,6 +23,8 @@ export function NotesPage() {
   const [error, setError] = useState("");
   const [savedAt, setSavedAt] = useState(0);
   const [passwordDialog, setPasswordDialog] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const currentRef = useRef(null);
   const saveRequestRef = useRef(0);
 
   const filteredNotes = useMemo(() => {
@@ -29,6 +36,7 @@ export function NotesPage() {
   }, [notes, query]);
   const selectedNote = useMemo(() => notes.find((note) => note.id === selectedId) || null, [notes, selectedId]);
   const isDirty = Boolean(selectedNote && draftNoteId === selectedNote.id && (draftTitle !== selectedNote.title || draftContent !== selectedNote.content));
+  currentRef.current = { selectedId, draftNoteId, draftTitle, draftContent, notes };
 
   useEffect(() => {
     loadNotes();
@@ -93,7 +101,8 @@ export function NotesPage() {
 
   async function saveNote(noteId = selectedId, title = draftTitle, content = draftContent) {
     if (!noteId) return;
-    if (selectedNote?.passwordProtected && !selectedNote.passwordUnlocked) {
+    const target = currentRef.current.notes.find(note => note.id === noteId);
+    if (target?.passwordProtected && !target.passwordUnlocked) {
       setError("암호를 입력한 뒤 저장할 수 있습니다.");
       return;
     }
@@ -112,46 +121,45 @@ export function NotesPage() {
     }
   }
 
-  async function deleteSelectedNote() {
-    if (!selectedNote) return;
-    if (selectedNote.passwordProtected && !selectedNote.passwordUnlocked && !(await unlockNote(selectedNote, "삭제"))) return;
-    if (!window.confirm(`${selectedNote.title} 메모를 삭제할까요?`)) return;
+  async function deleteSelectedNote(note = selectedNote) {
+    if (!note) return;
+    if (!window.confirm(`${note.title} 메모를 삭제할까요?`)) return;
     setError("");
     try {
-      await notesApi.remove(selectedNote.id);
-      setNotes((items) => items.filter((note) => note.id !== selectedNote.id));
+      await notesApi.remove(note.id);
+      setNotes((items) => items.filter((item) => item.id !== note.id));
     } catch (nextError) {
       setError(nextError.message || "메모를 삭제하지 못했습니다.");
     }
   }
 
-  async function setNotePassword() {
-    if (!selectedNote) return;
-    if (selectedNote.passwordProtected && !selectedNote.passwordUnlocked && !(await unlockNote(selectedNote, "암호 변경"))) return;
+  async function setNotePassword(note = selectedNote) {
+    if (!note) return;
+    if (note.passwordProtected && !note.passwordUnlocked && !(await unlockNote(note, "암호 변경"))) return;
     const password = await requestPassword({
-      title: selectedNote.passwordProtected ? "메모 암호 변경" : "메모 암호 설정",
-      body: `${selectedNote.title} 메모에 사용할 암호를 입력하세요.`,
-      confirmLabel: selectedNote.passwordProtected ? "암호 변경" : "암호 설정"
+      title: note.passwordProtected ? "메모 암호 변경" : "메모 암호 설정",
+      body: `${note.title} 메모에 사용할 암호를 입력하세요.`,
+      confirmLabel: note.passwordProtected ? "암호 변경" : "암호 설정"
     });
     if (!password) return;
     try {
-      const result = await notesApi.setPassword(selectedNote.id, password);
+      const result = await notesApi.setPassword(note.id, password);
       applyNote(result.note);
     } catch (nextError) {
       setError(nextError.message || "메모 암호를 설정하지 못했습니다.");
     }
   }
 
-  async function clearNotePassword() {
-    if (!selectedNote?.passwordProtected) return;
+  async function clearNotePassword(note = selectedNote) {
+    if (!note?.passwordProtected) return;
     const password = await requestPassword({
       title: "메모 암호 해제",
-      body: `${selectedNote.title} 메모의 암호를 해제하려면 현재 암호를 입력하세요.`,
+      body: `${note.title} 메모의 암호를 해제하려면 현재 암호를 입력하세요.`,
       confirmLabel: "암호 해제"
     });
     if (!password) return;
     try {
-      const result = await notesApi.clearPassword(selectedNote.id, password);
+      const result = await notesApi.clearPassword(note.id, password);
       applyNote(result.note);
     } catch (nextError) {
       setError(nextError.message || "메모 암호를 해제하지 못했습니다.");
@@ -159,7 +167,8 @@ export function NotesPage() {
   }
 
   async function unlockNote(note = selectedNote, actionLabel = "열람") {
-    if (!note?.passwordProtected || note.passwordUnlocked) return true;
+    if (!note) return null;
+    if (!note.passwordProtected || note.passwordUnlocked) return note;
     const password = await requestPassword({
       title: "메모 암호 입력",
       body: `${note.title} 메모를 ${actionLabel}하려면 암호가 필요합니다.`,
@@ -169,7 +178,7 @@ export function NotesPage() {
     try {
       const result = await notesApi.unlock(note.id, password);
       applyNote(result.note);
-      return true;
+      return result.note;
     } catch (nextError) {
       setError(nextError.message || "메모 암호를 확인하지 못했습니다.");
       return false;
@@ -178,7 +187,9 @@ export function NotesPage() {
 
   function applyNote(note) {
     setNotes((items) => sortNotes(items.map((item) => item.id === note.id ? note : item)));
-    if (selectedId === note.id) {
+    if (currentRef.current.selectedId === note.id) {
+      currentRef.current = { ...currentRef.current, draftNoteId: note.id, draftTitle: note.title, draftContent: note.content,
+        notes: currentRef.current.notes.map(item => item.id === note.id ? note : item) };
       setDraftNoteId(note.id);
       setDraftTitle(note.title);
       setDraftContent(note.content);
@@ -187,6 +198,55 @@ export function NotesPage() {
 
   function requestPassword(options) {
     return new Promise((resolve) => setPasswordDialog({ ...options, resolve }));
+  }
+
+  function draftFor(note) {
+    const current = currentRef.current;
+    return current.draftNoteId === note.id ? { title: current.draftTitle, content: current.draftContent } : { title: note.title, content: note.content };
+  }
+
+  async function renameNote(note) {
+    const target = await unlockNote(note, '이름 변경');
+    if (!target) return;
+    const title = window.prompt('새 메모 이름', target.title);
+    if (!title || title === target.title) return;
+    try {
+      const result = await notesApi.update(target.id, { ...draftFor(target), title });
+      applyNote(result.note);
+    } catch (nextError) { setError(nextError.message || '메모 이름을 변경하지 못했습니다.'); }
+  }
+
+  async function duplicateNote(note) {
+    const target = await unlockNote(note, '복제');
+    if (!target) return;
+    try {
+      const draft = draftFor(target);
+      const result = await notesApi.create({ ...draft, title: `${draft.title} 복사본` });
+      setNotes(items => [result.note, ...items]);
+      setSelectedId(result.note.id);
+    } catch (nextError) { setError(nextError.message || '메모를 복제하지 못했습니다.'); }
+  }
+
+  async function resetNotePassword(note) {
+    if (user?.role !== 'admin' || !window.confirm(`${note.title}의 2차 암호를 초기화할까요?`)) return;
+    try { await adminApi.resetNotePassword(note.id); await loadNotes(); setDraftNoteId(''); }
+    catch (nextError) { setError(nextError.message || '메모 암호를 초기화하지 못했습니다.'); }
+  }
+
+  function openContextMenu(event, note = null) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (note && note.id !== selectedId) {
+      if (isDirty) void saveNote();
+      setSelectedId(note.id);
+    }
+    setContextMenu(noteContextMenu(event, note, {
+      close: () => setContextMenu(null), create: createNote, refresh: loadNotes,
+      rename: renameNote, duplicate: duplicateNote, saving,
+      save: target => { const draft = draftFor(target); return saveNote(target.id, draft.title, draft.content); },
+      setPassword: setNotePassword, clearPassword: clearNotePassword, unlock: unlockNote,
+      remove: deleteSelectedNote, isAdmin: user?.role === 'admin', resetPassword: resetNotePassword
+    }));
   }
 
   function submitPasswordDialog(password) {
@@ -204,12 +264,15 @@ export function NotesPage() {
   return (
     <div className="notes-page">
       <header className="notes-toolbar">
-        <div className="notes-title">
-          <FileText size={20} />
-          <span>메모장</span>
+        <div className="feature-heading notes-title">
+          <span className="feature-icon"><FileText size={20} /></span>
+          <div>
+            <h1>메모</h1>
+            <span>{filteredNotes.length}개 메모</span>
+          </div>
         </div>
         <Button icon={Plus} variant="primary" onClick={createNote}>새 메모</Button>
-        <Button icon={RefreshCcw} iconOnly onClick={loadNotes} disabled={busy}>새로고침</Button>
+        <Button icon={RefreshCcw} iconOnly className="feature-refresh" onClick={loadNotes} disabled={busy}>새로고침</Button>
         <span className="toolbar-spacer" />
         <label className="search-box notes-search">
           <Search size={16} />
@@ -220,7 +283,7 @@ export function NotesPage() {
       {error ? <div className="error-banner page-error">{error}</div> : null}
 
       <div className="notes-layout">
-        <aside className="notes-list-panel" aria-label="메모 목록">
+        <aside className="notes-list-panel" aria-label="메모 목록" onContextMenu={event => openContextMenu(event)}>
           <div className="notes-list-summary">
             <span>{filteredNotes.length}개</span>
             {busy ? <Loader2 className="upload-spinner" size={16} /> : null}
@@ -233,6 +296,7 @@ export function NotesPage() {
                   type="button"
                   className={note.id === selectedId ? "note-list-item selected" : "note-list-item"}
                   onClick={() => setSelectedId(note.id)}
+                  onContextMenu={event => openContextMenu(event, note)}
                 >
                   <strong>{note.title}</strong>
                   <span>{notePreview(note)}</span>
@@ -249,7 +313,7 @@ export function NotesPage() {
           )}
         </aside>
 
-        <section className="notes-editor-panel" aria-label="메모 편집기">
+        <section className="notes-editor-panel" aria-label="메모 편집기" onContextMenu={event => openContextMenu(event, selectedNote)}>
           {selectedNote ? (
             <>
               <div className="notes-editor-top">
@@ -263,10 +327,11 @@ export function NotesPage() {
                 />
                 <div className="notes-editor-actions">
                   <span className={isDirty ? "note-save-state dirty" : "note-save-state"}>{saveStateLabel({ isDirty, saving, savedAt })}</span>
-                  <Button icon={LockKeyhole} onClick={setNotePassword}>{selectedNote.passwordProtected ? "암호 변경" : "암호 설정"}</Button>
-                  {selectedNote.passwordProtected ? <Button icon={UnlockKeyhole} onClick={clearNotePassword}>암호 해제</Button> : null}
+                  <Button icon={MoreHorizontal} iconOnly onClick={event => openContextMenu(event, selectedNote)}>메모 작업</Button>
+                  <Button icon={LockKeyhole} onClick={() => setNotePassword()}>{selectedNote.passwordProtected ? "암호 변경" : "암호 설정"}</Button>
+                  {selectedNote.passwordProtected ? <Button icon={UnlockKeyhole} onClick={() => clearNotePassword()}>암호 해제</Button> : null}
                   <Button onClick={() => saveNote()} disabled={!isDirty || saving}>저장</Button>
-                  <Button icon={Trash2} iconOnly variant="danger" onClick={deleteSelectedNote}>삭제</Button>
+                  <Button icon={Trash2} iconOnly variant="danger" onClick={() => deleteSelectedNote()}>삭제</Button>
                 </div>
               </div>
               {selectedNote.passwordProtected && !selectedNote.passwordUnlocked ? (
@@ -300,6 +365,7 @@ export function NotesPage() {
           onClose={closePasswordDialog}
         />
       ) : null}
+      <DriveContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </div>
   );
 }

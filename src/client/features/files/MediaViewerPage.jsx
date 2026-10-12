@@ -1,12 +1,19 @@
-import { Download, Expand, Film, Image as ImageIcon, Loader2, RefreshCcw, Search, Video } from "lucide-react";
+import { Download, Expand, Film, Image as ImageIcon, Loader2, LockKeyhole, MoreHorizontal, RefreshCcw, Search, UnlockKeyhole, Video } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
+import { PasswordDialog } from '../../shared/components/PasswordDialog.jsx';
 import { formatDate } from "../../shared/lib/dates.js";
 import { formatBytes } from "../../shared/lib/formatBytes.js";
 import { filePath } from "./fileDisplay.js";
 import { filesApi } from "./filesApi.js";
+import { startDownload } from "./downloadTransfers.js";
 import { isImageFile, isVideoFile } from "./components/FilePreview.jsx";
+import { DriveContextMenu } from './components/DriveContextMenu.jsx';
+import { ShareDialog } from './components/ShareDialog.jsx';
+import { MoveDialog } from './components/MoveDialog.jsx';
+import { useMediaFileActions } from './useMediaFileActions.js';
+import { useAuth } from '../auth/AuthProvider.jsx';
 
 const kindOptions = [
   { id: "", label: "전체", icon: Film },
@@ -14,7 +21,8 @@ const kindOptions = [
   { id: "video", label: "동영상", icon: Video }
 ];
 
-export function MediaViewerPage() {
+export function MediaViewerPage({ onOpenLocation }) {
+  const { user } = useAuth();
   const [files, setFiles] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
@@ -22,6 +30,10 @@ export function MediaViewerPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fullscreenFile, setFullscreenFile] = useState(null);
+  const [unlockFile, setUnlockFile] = useState(null);
+  const [unlockError, setUnlockError] = useState('');
+  const actions = useMediaFileActions({ onChanged: loadMedia, onError: setError, onOpenLocation,
+    onOpenFullscreen: openFullscreen, isAdmin: user?.role === 'admin' });
 
   const selectedFile = useMemo(() => files.find((file) => file.id === selectedId) || files[0] || null, [files, selectedId]);
   const counts = useMemo(() => ({
@@ -47,6 +59,8 @@ export function MediaViewerPage() {
     function handleKeyDown(event) {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
       if (fullscreenFile) return;
+      if (unlockFile) return;
+      if (actions.hasOverlay) return;
       if (!selectedFile) return;
       if (event.key === "ArrowRight" || event.key === "ArrowDown") {
         event.preventDefault();
@@ -56,13 +70,33 @@ export function MediaViewerPage() {
         selectOffset(-1);
       } else if (event.key.toLowerCase() === "f" || event.key === "Enter") {
         event.preventDefault();
-        setFullscreenFile(selectedFile);
+        openFullscreen(selectedFile);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [files, selectedFile, fullscreenFile]);
+  }, [files, selectedFile, fullscreenFile, unlockFile, actions.hasOverlay]);
+
+  function requestUnlock(file) {
+    setUnlockError('');
+    setUnlockFile(file);
+  }
+
+  function openFullscreen(file) {
+    if (isLocked(file)) { requestUnlock(file); return; }
+    setFullscreenFile(file);
+  }
+
+  async function unlockMedia(password) {
+    try {
+      await filesApi.unlock(unlockFile.id, password);
+      setUnlockFile(null);
+      await loadMedia();
+    } catch (nextError) {
+      setUnlockError(nextError.message || '암호를 확인하지 못했습니다.');
+    }
+  }
 
   async function loadMedia() {
     setBusy(true);
@@ -86,15 +120,19 @@ export function MediaViewerPage() {
 
   function downloadSelected() {
     if (!selectedFile) return;
-    window.open(filesApi.downloadUrl(selectedFile.id), "_blank", "noopener,noreferrer");
+    if (isLocked(selectedFile)) { requestUnlock(selectedFile); return; }
+    void startDownload(filesApi.downloadUrl(selectedFile.id), selectedFile.name);
   }
 
   return (
     <div className="media-viewer-page">
       <header className="media-toolbar">
-        <div className="media-title">
-          <Film size={20} />
-          <span>이미지/동영상</span>
+        <div className="feature-heading media-title">
+          <span className="feature-icon"><Film size={20} /></span>
+          <div>
+            <h1>미디어</h1>
+            <span>이미지 {counts.images}개 · 동영상 {counts.videos}개</span>
+          </div>
         </div>
         <div className="media-kind-tabs" role="group" aria-label="미디어 종류">
           {kindOptions.map((option) => {
@@ -118,7 +156,7 @@ export function MediaViewerPage() {
           <Search size={16} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="이미지, 동영상 검색" />
         </label>
-        <Button icon={RefreshCcw} iconOnly onClick={loadMedia} disabled={busy}>새로고침</Button>
+        <Button icon={RefreshCcw} iconOnly className="feature-refresh" onClick={loadMedia} disabled={busy}>새로고침</Button>
       </header>
 
       {error ? <div className="error-banner page-error">{error}</div> : null}
@@ -135,17 +173,18 @@ export function MediaViewerPage() {
               <span>불러오는 중</span>
             </div>
           ) : files.length ? (
-            <div className="media-grid">
+            <div className="media-grid" onWheel={handleMediaGridWheel}>
               {files.map((file) => (
                 <button
                   key={file.id}
                   className={selectedFile?.id === file.id ? "media-card selected" : "media-card"}
                   type="button"
                   onClick={() => setSelectedId(file.id)}
-                  onDoubleClick={() => setFullscreenFile(file)}
+                  onDoubleClick={() => openFullscreen(file)}
+                  onContextMenu={(event) => { setSelectedId(file.id); actions.openMenu(event, file); }}
                 >
                   <MediaThumb file={file} />
-                  <span>{file.name}</span>
+                  <span>{file.name}{isLocked(file) ? <small className="media-lock-label">잠금 파일</small> : null}</span>
                 </button>
               ))}
             </div>
@@ -160,8 +199,15 @@ export function MediaViewerPage() {
         <section className={isVideoFile(selectedFile) ? "media-preview-panel video-mode" : "media-preview-panel"} aria-label="미디어 미리보기">
           {selectedFile ? (
             <>
-              <div className="media-preview-stage" onDoubleClick={() => setFullscreenFile(selectedFile)}>
-                <MediaPreview file={selectedFile} />
+              <div className="media-preview-stage" onDoubleClick={() => openFullscreen(selectedFile)} onContextMenu={(event) => actions.openMenu(event, selectedFile)}>
+                {isLocked(selectedFile) ? (
+                  <div className="media-locked-state">
+                    <LockKeyhole size={42} />
+                    <strong>잠금 파일</strong>
+                    <span>미리보기·재생·다운로드하려면 암호를 입력하세요.</span>
+                    <Button icon={UnlockKeyhole} onClick={() => requestUnlock(selectedFile)}>암호 입력</Button>
+                  </div>
+                ) : <MediaPreview file={selectedFile} />}
               </div>
               <div className="media-details">
                 <div>
@@ -169,13 +215,14 @@ export function MediaViewerPage() {
                   <span>{selectedFile.mediaKind === "video" ? "동영상" : "이미지"} · {formatBytes(selectedFile.sizeBytes)}</span>
                 </div>
                 <div className="media-detail-actions">
-                  <Button icon={Expand} onClick={() => setFullscreenFile(selectedFile)}>전체 화면</Button>
+                  <Button icon={MoreHorizontal} iconOnly disabled={actions.busy} onClick={(event) => actions.openMenu(event, selectedFile)}>파일 작업</Button>
+                  <Button icon={Expand} onClick={() => openFullscreen(selectedFile)}>전체 화면</Button>
                   <Button icon={Download} onClick={downloadSelected}>다운로드</Button>
                 </div>
                 <dl>
                   <div>
                     <dt>경로</dt>
-                    <dd>{filePath(selectedFile)}</dd>
+                    <dd><button className="media-location-link" type="button" onClick={() => onOpenLocation?.(selectedFile)} title="드라이브에서 폴더 열기">{filePath(selectedFile)}</button></dd>
                   </div>
                   <div>
                     <dt>수정일</dt>
@@ -195,11 +242,36 @@ export function MediaViewerPage() {
       </div>
 
       {fullscreenFile ? <MediaFullscreen file={fullscreenFile} onClose={() => setFullscreenFile(null)} /> : null}
+      {unlockFile ? <PasswordDialog title="잠금 파일 암호 입력" body={unlockError || `${unlockFile.name}의 암호를 입력하세요.`} confirmLabel="잠금 해제" onSubmit={unlockMedia} onClose={() => setUnlockFile(null)} /> : null}
+      <DriveContextMenu menu={actions.menu} onClose={actions.closeMenu} />
+      <ShareDialog files={actions.shareFiles} onClose={actions.closeShare} />
+      <MoveDialog files={actions.moveFiles} onMove={actions.move} onClose={actions.closeMove} />
+      {actions.passwordDialog ? <PasswordDialog title={actions.passwordDialog.title} body={actions.passwordDialog.body} confirmLabel={actions.passwordDialog.confirmLabel}
+        onSubmit={actions.finishPassword} onClose={() => actions.finishPassword()} /> : null}
     </div>
   );
 }
 
+function handleMediaGridWheel(event) {
+  const element = event.currentTarget;
+  const maxScrollLeft = element.scrollWidth - element.clientWidth;
+  if (maxScrollLeft <= 0) return;
+
+  const scale = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? element.clientWidth : 1;
+  const horizontalDelta = event.deltaX * scale;
+  const verticalDelta = event.deltaY * scale;
+  const delta = Math.abs(horizontalDelta) > Math.abs(verticalDelta) ? horizontalDelta : verticalDelta;
+  if (!delta) return;
+
+  const nextScrollLeft = Math.max(0, Math.min(maxScrollLeft, element.scrollLeft + delta));
+  if (nextScrollLeft === element.scrollLeft) return;
+
+  event.preventDefault();
+  element.scrollLeft = nextScrollLeft;
+}
+
 function MediaThumb({ file }) {
+  if (isLocked(file)) return <span className="media-locked-thumb" aria-label="잠금 파일"><LockKeyhole size={26} /></span>;
   const src = filesApi.previewUrl(file.id);
   if (isImageFile(file)) return <img src={src} alt="" loading="lazy" />;
   return (
@@ -208,6 +280,10 @@ function MediaThumb({ file }) {
       <Video size={22} />
     </span>
   );
+}
+
+function isLocked(file) {
+  return Boolean(file?.passwordProtected && !file.passwordUnlocked);
 }
 
 function MediaPreview({ file }) {

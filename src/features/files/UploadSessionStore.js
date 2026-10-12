@@ -6,6 +6,18 @@ import { config } from "../../core/config.js";
 export class UploadSessionStore {
   constructor() {
     this.lastCleanupAt = 0;
+    this.cachedSessions = null;
+    this.cachedAt = 0;
+  }
+
+  invalidate() {
+    this.cachedSessions = null;
+  }
+
+  updateMetadata(metadata) {
+    const session = this.cachedSessions?.find(entry => entry.metadata.id === metadata.id);
+    if (session) session.metadata = metadata;
+    else this.invalidate();
   }
 
   getPendingBytes(filters = {}) {
@@ -31,6 +43,7 @@ export class UploadSessionStore {
       fs.rmSync(session.dir, { recursive: true, force: true });
       deleted += 1;
     }
+    this.invalidate();
     return deleted;
   }
 
@@ -46,6 +59,7 @@ export class UploadSessionStore {
       deleted += 1;
     }
     this.lastCleanupAt = now;
+    this.invalidate();
     return deleted;
   }
 
@@ -54,6 +68,8 @@ export class UploadSessionStore {
     if (cleanup && now - this.lastCleanupAt > 60_000) {
       this.cleanupStaleSessions(now);
     }
+
+    if (this.cachedSessions && now - this.cachedAt < 1000) return this.cachedSessions;
 
     const root = this.rootDir();
     if (!fs.existsSync(root)) return [];
@@ -75,6 +91,8 @@ export class UploadSessionStore {
         });
       }
     }
+    this.cachedSessions = sessions;
+    this.cachedAt = now;
     return sessions;
   }
 

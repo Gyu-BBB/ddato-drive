@@ -1,18 +1,22 @@
 import { ChevronRight, Home } from "lucide-react";
 
-export function Breadcrumbs({ stack, onNavigate, label = "" }) {
+export function Breadcrumbs({ stack, onNavigate, label = "", compact = false }) {
+  if (!stack.length && !label) return null;
+
   return (
-    <div className="breadcrumb-row">
-      {label ? <span className="muted">{label}</span> : null}
-      <button className="breadcrumb-button" onClick={() => onNavigate(-1)}>
-        <Home size={15} /> 홈
-      </button>
-      {stack.map((folder, index) => (
-        <span className="breadcrumb-segment" key={folder.id}>
-          <ChevronRight size={14} color="var(--dd-muted)" />
-          <button className="breadcrumb-button" onClick={() => onNavigate(index)}>{folder.name}</button>
-        </span>
-      ))}
-    </div>
+    <nav className={compact ? "breadcrumb-row compact" : "breadcrumb-row"} aria-label="현재 경로">
+      <div className="breadcrumb-trail" aria-label="현재 경로">
+        {label ? <span className="breadcrumb-owner">{label}</span> : null}
+        <button className="breadcrumb-button" onClick={() => onNavigate(-1)}>
+          <Home size={13} /> 홈
+        </button>
+        {stack.map((folder, index) => (
+          <span className="breadcrumb-segment" key={folder.id}>
+            <ChevronRight size={12} aria-hidden="true" />
+            <button className="breadcrumb-button" onClick={() => onNavigate(index)}>{folder.name}</button>
+          </span>
+        ))}
+      </div>
+    </nav>
   );
 }

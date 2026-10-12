@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button } from "./Button.jsx";
 import { IconButton } from "./IconButton.jsx";
 
-export function PasswordDialog({ title = "암호 입력", body = "", confirmLabel = "확인", onSubmit, onClose }) {
+export function PasswordDialog({ title = "암호 입력", body = "", confirmLabel = "확인", recoverLabel = "", onSubmit, onRecover, onClose }) {
   const [password, setPassword] = useState("");
 
   function submit(event) {
@@ -30,6 +30,8 @@ export function PasswordDialog({ title = "암호 입력", body = "", confirmLabe
           </label>
         </div>
         <footer className="share-dialog-footer">
+          {recoverLabel ? <Button className="password-recovery-button" onClick={onRecover}>{recoverLabel}</Button> : null}
+          <span className="dialog-footer-spacer" />
           <Button onClick={onClose}>취소</Button>
           <Button variant="primary" type="submit" disabled={!password}>{confirmLabel}</Button>
         </footer>

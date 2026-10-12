@@ -100,22 +100,22 @@ filesRouter.get("/files/upload-sessions/:sessionId", requireUser, asyncRoute((re
   res.json({ ok: true, session });
 }));
 
-filesRouter.post("/files/upload-sessions/:sessionId/chunk", requireUser, uploadChunk, asyncRoute((req, res) => {
-  const session = resumableUploadService.appendChunk(req.user, req.params.sessionId, {
+filesRouter.post("/files/upload-sessions/:sessionId/chunk", requireUser, uploadChunk, asyncRoute(async (req, res) => {
+  const session = await resumableUploadService.appendChunk(req.user, req.params.sessionId, {
     offset: req.header("x-upload-offset"),
     buffer: req.body
   });
   res.json({ ok: true, session });
 }));
 
-filesRouter.post("/files/upload-sessions/:sessionId/complete", requireUser, asyncRoute((req, res) => {
-  const record = resumableUploadService.completeSession(req, req.params.sessionId);
+filesRouter.post("/files/upload-sessions/:sessionId/complete", requireUser, asyncRoute(async (req, res) => {
+  const record = await resumableUploadService.completeSession(req, req.params.sessionId);
   auditLogger.record("file.upload", req, record.id, record);
   res.status(201).json({ ok: true, file: record });
 }));
 
-filesRouter.delete("/files/upload-sessions/:sessionId", requireUser, asyncRoute((req, res) => {
-  const result = resumableUploadService.cancelSession(req.user, req.params.sessionId);
+filesRouter.delete("/files/upload-sessions/:sessionId", requireUser, asyncRoute(async (req, res) => {
+  const result = await resumableUploadService.cancelSession(req.user, req.params.sessionId);
   auditLogger.record("file.upload_session.cancel", req, req.params.sessionId, result);
   res.json({ ok: true, ...result });
 }));
@@ -219,8 +219,8 @@ filesRouter.get("/files/:id/download", requireUser, asyncRoute(async (req, res) 
   });
 }));
 
-filesRouter.get("/files/:id/preview", requireUser, asyncRoute((req, res) => {
-  const target = fileService.getPreviewStreamTarget(req, req.params.id);
+filesRouter.get("/files/:id/preview", requireUser, asyncRoute(async (req, res) => {
+  const target = await fileService.getPreviewStreamTarget(req, req.params.id);
   if (target.pending) {
     res.status(202).json({ ok: true, preview: target.preview });
     return;

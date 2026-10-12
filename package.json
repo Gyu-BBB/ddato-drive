@@ -10,20 +10,26 @@
     "dev:web": "vite --host 0.0.0.0 --port 5174",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4174",
-    "smoke": "node --disable-warning=ExperimentalWarning scripts/smoke-test.js"
+    "smoke": "node --disable-warning=ExperimentalWarning scripts/smoke-test.js",
+    "test:transfers": "node scripts/storage-performance-test.js && node scripts/upload-store-test.js && node scripts/transfer-progress-test.js",
+    "test:zip-preview": "node scripts/zip-preview-test.js",
+    "test:archive-preview": "node scripts/archive-preview-test.js",
+    "test:folder-upload": "node scripts/folder-upload-test.js"
   },
   "dependencies": {
     "express": "^5.2.1",
     "lucide-react": "^1.21.0",
     "multer": "^2.1.1",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "yauzl": "^3.4.0"
   },
   "engines": {
     "node": ">=23.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.3",
+    "fake-indexeddb": "^6.2.5",
     "vite": "^8.1.0"
   }
 }

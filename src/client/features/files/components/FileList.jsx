@@ -166,6 +166,7 @@ function ColumnView({
 }) {
   const [trail, setTrail] = useState([]);
   const requestIdRef = useRef(0);
+  const previewColumnRef = useRef(null);
   const baseColumnKey = useMemo(() => files.map((file) => file.id).join("|"), [files]);
   const columns = useMemo(() => {
     return [
@@ -185,6 +186,18 @@ function ColumnView({
     requestIdRef.current += 1;
     setTrail([]);
   }, [baseColumnKey, ownerId, canBrowseColumns]);
+
+  useEffect(() => {
+    if (!selectedFile || selectedFile.type === "folder" || !window.matchMedia("(max-width: 720px)").matches) return;
+    const frame = window.requestAnimationFrame(() => {
+      previewColumnRef.current?.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "nearest",
+        inline: "start"
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedFile]);
 
   async function selectColumnFile(file, event, columnIndex) {
     onSelect(file, event);
@@ -246,7 +259,7 @@ function ColumnView({
           />
         </section>
       ))}
-      <section className="finder-column finder-column-preview">
+      <section ref={previewColumnRef} className="finder-column finder-column-preview">
         <div className="finder-column-header">미리보기</div>
         <ColumnPreview file={selectedFile} onUnlock={onUnlock} />
       </section>
