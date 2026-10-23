@@ -14,11 +14,13 @@ This project was built for a personal domain setup such as `ddato.site`, but it 
 - Resumable upload sessions with pause, cancel, retry, and reload recovery
 - Up to 10 concurrent upload transfers per account, with live speed and transferred/total byte counters
 - Finder-style drive views: icon, list, column, and gallery
+- URL-based navigation for sidebar pages, folder locations and admin tabs, with browser back/forward and refresh restoration
 - File search across folders with path information
 - Sorting by name, size, extension, created date, updated date, and type
 - Folder colors and file/folder move, duplicate, rename, trash, restore, and purge
 - Trash items are permanently deleted after 30 days from deletion, checked at server startup and every minute; restored items are excluded. Cleanup removes stored files, preview caches, and share records and writes an admin audit log. A folder containing newer trash items is retained until those items expire.
 - Multi-select actions and context menus
+- Single-click folder focus preserves sidebar visibility and layout for reliable double-click opening; use the context menu's file information action to open metadata explicitly
 - Drag checked files/folders together onto a folder or a home/ancestor breadcrumb, with an item-count drag badge
 - Download files and stream folder ZIP downloads
 - Public share links with 1-hour or permanent expiration modes
@@ -26,6 +28,7 @@ This project was built for a personal domain setup such as `ddato.site`, but it 
 - File and note access passwords for reading/editing and protected file operations; owners can delete locked items without the secondary password
 - Admin reset for forgotten file/note access passwords
 - Image/video viewer and memo page with context menus, explicit locked-media states, and clickable media folder paths
+- Image editing in the media page: touch/keyboard cropping, 90-degree rotation, colored pen strokes, undo/redo and save as a new PNG beside the original. Processing stays in the browser (up to 24 megapixels); storage quotas still apply. Password-protected images must have password protection removed before editing to avoid creating an unprotected derivative.
 - Document, text, image, audio, video, PDF, spreadsheet, and archive preview support where possible
 - Async document PDF preview jobs with text fallback
 - Admin audit logs and storage/system status dashboard
@@ -272,6 +275,7 @@ Run the production build and smoke test:
 npm run build
 npm run smoke
 npm run test:transfers
+npm run test:transfer-ui
 node scripts/upload-concurrency-test.js
 npm run test:folder-upload
 npm run test:trash-retention
@@ -279,9 +283,29 @@ npm run test:drag-move
 npm run test:resources
 npm run test:zip-preview
 npm run test:archive-preview
+npm run test:navigation
+npm run test:media-layout
 ```
 
 The smoke test starts a temporary server, uses an isolated temporary data directory, and checks auth, admin controls, uploads, previews, sharing, quotas, trash, passwords, ZIP download, and cross-platform filename behavior.
+
+Transfer cards show per-file and combined remaining-time estimates using current transfer speed. Combined estimates include queued transfers but exclude paused/failed/completed transfers. Unknown sizes or stalled speeds show a calculating state; completed byte transfers show a finalizing state until saving finishes. `test:transfers` checks the calculations and `test:transfer-ui` checks desktop/mobile card rendering using Chrome without accessing live user files.
+
+The navigation browser test also uses an isolated server/storage directory. It requires Google Chrome installed (or a compatible installed browser selected with `PLAYWRIGHT_CHANNEL`) and verifies desktop/mobile history, deep links, admin access, public shares and uninterrupted uploads during folder navigation.
+
+The media layout browser test uses the same browser setup with isolated storage. It checks wide, portrait and square images across desktop, mobile and landscape viewports, including screenshot pixel checks that all four corners remain visible. Editor checks cover rotation, cropping, touch/mouse pen strokes, undo/redo, PNG output pixels, unchanged originals, quota failures and retry, discard confirmation and protected-file restrictions.
+
+## Page URLs
+
+- `/`: home
+- `/folders/:folderId`: a folder; the server resolves its current breadcrumb path
+- `/media`, `/notes`, `/trash`: media, notes and trash
+- `/admin`, `/admin/users`, `/admin/files`, `/admin/audit`: admin sections
+- `/admin/files?owner=:userId&folder=:folderId`: an admin's selected user and folder (`mode=trash` selects that user's trash)
+- `/admin/login` and `/admin-login`: admin sign-in
+- `/share/:token`: public share
+
+These URLs do not grant access: authentication, ownership, admin permissions, file passwords and share validity are still enforced by the API. Browser back can still leave the site when there is no earlier in-app history; it is not intercepted or trapped.
 
 ## API Overview
 
