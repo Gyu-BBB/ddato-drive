@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict';
 import { createSpeedMeter } from '../src/client/shared/lib/transferProgress.js';
 import { startDownload, getDownloads, subscribeDownloads, clearDownloads, cancelDownload } from '../src/client/features/files/downloadTransfers.js';
+import { downloadPickerOptions } from '../src/client/features/files/downloadFilename.js';
+
+for (const [name, extension] of [
+  ['보고서.pdf', '.pdf'], ['사진.JPG', '.JPG'], ['budget.2026.xlsx', '.xlsx'],
+  ['선택 항목.zip', '.zip'], ['backup.tar.gz', '.tar.gz'], ['backup.TAR.XZ', '.TAR.XZ'],
+  ['archive.7z', '.7z'], ['.env', '.env']
+]) {
+  const options = downloadPickerOptions(name);
+  assert.equal(options.suggestedName, name);
+  assert.equal(options.excludeAcceptAllOption, true);
+  assert.deepEqual(options.types[0].accept['application/octet-stream'], [extension]);
+}
+for (const name of ['README', 'trailing.', 'file.extensionthatiswaytoolong']) {
+  assert.deepEqual(downloadPickerOptions(name), { suggestedName: name });
+}
 
 let time = 0;
 const meter = createSpeedMeter(() => time);
@@ -13,9 +28,12 @@ assert.equal(meter(3072), 0);
 
 const written = [];
 let closed = false;
-globalThis.window = { showSaveFilePicker: async () => ({ createWritable: async () => ({
+const pickerOptions = [];
+globalThis.window = { showSaveFilePicker: async options => {
+  pickerOptions.push(options);
+  return { createWritable: async () => ({
   write: async chunk => written.push(chunk), close: async () => { closed = true; }, abort: async () => {}
-}) }) };
+}) }; } };
 globalThis.fetch = async () => new Response(new ReadableStream({
   start(controller) {
     controller.enqueue(new Uint8Array(1024));
@@ -31,6 +49,13 @@ assert.equal(written.reduce((sum, chunk) => sum + chunk.byteLength, 0), 3072);
 assert(snapshots.some(item => item.status === 'uploading' && item.uploadedBytes > 0 && item.sizeBytes === 3072));
 assert.equal(getDownloads().at(-1).status, 'done');
 assert.equal(getDownloads().at(-1).progress, 100);
+assert.deepEqual(pickerOptions[0], downloadPickerOptions('fixture.bin'));
+for (const [name, method] of [['바꿀 이름.pdf', 'GET'], ['선택 항목.zip', 'POST'], ['backup.tar.gz', 'GET']]) {
+  await startDownload('/rename-fixture', name, { method, body: method === 'POST' ? { ids: ['one', 'two'] } : undefined });
+  assert.equal(getDownloads().at(-1).status, 'done');
+  assert.deepEqual(pickerOptions.at(-1), downloadPickerOptions(name));
+}
+console.log('Save dialog extension preservation passed: documents, ZIP selections, compound archives and extensionless files.');
 written.length = 0;
 snapshots.length = 0;
 globalThis.fetch = async () => new Response(new ReadableStream({
@@ -61,6 +86,7 @@ await startDownload('/cancel-fixture', 'cancel.bin');
 assert(aborted);
 assert.equal(getDownloads().at(-1).status, 'failed');
 assert.equal(getDownloads().at(-1).error, '다운로드가 취소되었습니다.');
+
 const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
 const originalDocument = globalThis.document;
 const originalTimeout = globalThis.setTimeout;

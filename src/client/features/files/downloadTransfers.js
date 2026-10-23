@@ -1,5 +1,6 @@
 import { formatApiErrorMessage } from '../../shared/api/apiClient.js';
 import { createSpeedMeter } from '../../shared/lib/transferProgress.js';
+import { downloadPickerOptions } from './downloadFilename.js';
 
 let transfers = [];
 const listeners = new Set();
@@ -33,7 +34,7 @@ export async function startDownload(url, name, { method = 'GET', body } = {}) {
     // Supported browsers can stream large downloads directly to disk.
     if (typeof window.showSaveFilePicker === 'function') {
       try {
-        const handle = await window.showSaveFilePicker({ suggestedName: name });
+        const handle = await window.showSaveFilePicker(downloadPickerOptions(name));
         writer = await handle.createWritable();
       } catch (error) {
         if (error.name !== 'SecurityError') throw error;
