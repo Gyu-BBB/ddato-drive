@@ -61,6 +61,47 @@ await startDownload('/cancel-fixture', 'cancel.bin');
 assert(aborted);
 assert.equal(getDownloads().at(-1).status, 'failed');
 assert.equal(getDownloads().at(-1).error, '다운로드가 취소되었습니다.');
+const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+const originalDocument = globalThis.document;
+const originalTimeout = globalThis.setTimeout;
+const cleanupUrls = [];
+const anchors = [];
+try {
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {} });
+  globalThis.window = {};
+  globalThis.document = {
+    createElement: () => ({ click() { anchors.push({ href: this.href, name: this.download }); }, remove() {} }),
+    body: { append() {} }
+  };
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    if (delay === 60000) { cleanupUrls.push(callback); return 0; }
+    return originalTimeout(callback, delay, ...args);
+  };
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, ...options });
+    return new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Length': '3' } });
+  };
+  await startDownload('/lan/file', 'single.txt');
+  const single = getDownloads().at(-1);
+  assert.equal(single.status, 'done');
+  assert.equal(single.uploadedBytes, 3);
+  assert(single.id.startsWith('download-'));
+  await startDownload('/api/files/download', 'selection.zip', { method: 'POST', body: { ids: ['one', 'two'] } });
+  assert.equal(getDownloads().at(-1).status, 'done');
+  assert.notEqual(single.id, getDownloads().at(-1).id);
+  assert.deepEqual(JSON.parse(requests[1].body), { ids: ['one', 'two'] });
+  assert(requests.every(request => request.credentials === 'include'));
+  assert.deepEqual(anchors.map(anchor => anchor.name), ['single.txt', 'selection.zip']);
+  assert(anchors.every(anchor => anchor.href.startsWith('blob:')));
+  console.log('LAN HTTP fallback passed: no randomUUID/file picker, single download, multi-file POST, browser save and authenticated requests.');
+} finally {
+  for (const cleanup of cleanupUrls) cleanup();
+  Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+  if (originalDocument === undefined) delete globalThis.document;
+  else globalThis.document = originalDocument;
+  globalThis.setTimeout = originalTimeout;
+}
 clearDownloads();
 assert.equal(getDownloads().length, 0);
 unsubscribe();

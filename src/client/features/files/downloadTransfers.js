@@ -17,7 +17,10 @@ export function clearDownloads() {
 export function cancelDownload(id) { controllers.get(id)?.abort(); }
 
 export async function startDownload(url, name, { method = 'GET', body } = {}) {
-  const id = crypto.randomUUID();
+  // This local progress ID must also work on LAN HTTP, where randomUUID is unavailable.
+  const id = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `download-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const controller = new AbortController();
   controllers.set(id, controller);
   transfers = [...transfers, { id, name, status: 'uploading', uploadedBytes: 0, sizeBytes: null, speedBytes: 0, progress: 0 }];
