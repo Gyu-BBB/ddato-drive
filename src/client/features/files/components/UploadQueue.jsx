@@ -1,6 +1,7 @@
 import { CheckCircle2, ChevronDown, ChevronUp, Loader2, PauseCircle, PlayCircle, RotateCcw, Trash2, UploadCloud, X, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../../../shared/lib/formatBytes.js";
+import { formatPercent } from "../../../shared/lib/formatPercent.js";
 
 export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, onResume, onRetry, onCancelAll, onPauseAll, onResumeAll, onClearCompleted }) {
   const downloading = direction === "download";
@@ -210,7 +211,7 @@ function uploadLabel(upload) {
   const size = uploadSizeLabel(upload);
   const suffix = size ? ` · ${size}` : "";
   if (upload.status === "queued") return `대기 중${suffix}`;
-  if (upload.status === "uploading" && Number.isFinite(upload.progress)) return `${upload.progress}%${suffix}`;
+  if (upload.status === "uploading" && Number.isFinite(upload.progress)) return `${formatPercent(upload.progress)}${suffix}`;
   if (upload.status === "paused") return `일시정지됨${suffix}`;
   if (upload.status === "done") return `업로드됨${suffix}`;
   if (upload.status === "canceled") return `취소됨${suffix}`;

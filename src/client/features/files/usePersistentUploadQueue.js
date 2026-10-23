@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../../shared/api/apiError.js";
 import { filesApi } from "./filesApi.js";
 import { createSpeedMeter } from "../../shared/lib/transferProgress.js";
+import { formatPercent } from "../../shared/lib/formatPercent.js";
 import { getStoredUploads, removeStoredUpload, saveStoredUpload } from "./uploadQueueStore.js";
 
 const CHUNK_SIZE = 8 * 1024 * 1024;
@@ -199,7 +200,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
         serverSessionId: session.id,
         uploadedBytes: session.uploadedBytes,
         progress: session.progress,
-        detail: session.uploadedBytes ? `${session.progress}%부터 재개` : "업로드 중"
+        detail: session.uploadedBytes ? `${formatPercent(session.progress)}부터 재개` : "업로드 중"
       }) || item;
 
       let uploadedBytes = session.uploadedBytes;
@@ -221,13 +222,13 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
             if (now - lastProgressAt < 200 && loaded < chunk.size) return;
             lastProgressAt = now;
             const optimisticBytes = Math.min(item.sizeBytes, baseOffset + loaded);
-            const progress = item.sizeBytes ? Math.round((optimisticBytes / item.sizeBytes) * 100) : 100;
+            const progress = item.sizeBytes ? (optimisticBytes / item.sizeBytes) * 100 : 100;
             updateVisibleOnly(item.id, {
               uploadedBytes: optimisticBytes,
               speedBytes: speedMeter(optimisticBytes - initialBytes),
               speedUpdatedAt: Date.now(),
               progress,
-              detail: `${progress}%`
+              detail: formatPercent(progress)
             });
           }
         });
@@ -236,7 +237,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
         updateVisibleOnly(item.id, {
           uploadedBytes,
           progress: result.session.progress,
-          detail: `${result.session.progress}%`
+          detail: formatPercent(result.session.progress)
         });
       }
 

@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { createSpeedMeter } from '../src/client/shared/lib/transferProgress.js';
+import { formatPercent } from '../src/client/shared/lib/formatPercent.js';
+for (const [value, expected] of [[0, '0.00%'], [12.3456789, '12.35%'], [12.3, '12.30%'], [99.999, '100.00%'], [100, '100.00%'], [-1, '0.00%'], [NaN, '0.00%'], [Infinity, '0.00%']]) {
+  assert.equal(formatPercent(value), expected);
+}
 import { startDownload, getDownloads, subscribeDownloads, clearDownloads, cancelDownload } from '../src/client/features/files/downloadTransfers.js';
 import { downloadPickerOptions } from '../src/client/features/files/downloadFilename.js';
 
