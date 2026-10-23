@@ -33,7 +33,7 @@ const contentSecurityPolicy = [
   "media-src 'self' blob:",
   "frame-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "connect-src 'self'",
   "worker-src 'self' blob:"
 ].join("; ");

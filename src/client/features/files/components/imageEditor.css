@@ -22,6 +22,15 @@
 .image-editor-stage { flex: 1; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #19191b; }
 .image-editor-stage .ReactCrop { flex: none; max-width: none; }
 .image-editor-stage canvas { display: block; touch-action: none; }
+.image-editor-stage canvas {
+  background-color: #e0e0e0;
+  background-image: conic-gradient(#c1c1c1 25%, transparent 0 50%, #c1c1c1 0 75%, transparent 0);
+  background-size: 16px 16px;
+}
+.image-editor-notices { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 6px; color: var(--dd-muted); }
+.image-editor-notices:hover { background: var(--dd-surface-raised); }
+.image-editor-processing { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 6px 14px; font-size: 12px; }
+.image-editor-processing > span { flex: 1; min-width: 0; }
 .image-editor-stage.pen-mode canvas { cursor: crosshair; }
 .image-editor-footer { display: flex; align-items: end; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--dd-border); }
 .image-editor-footer label { flex: 1; min-width: 0; display: grid; gap: 4px; font-size: 12px; }

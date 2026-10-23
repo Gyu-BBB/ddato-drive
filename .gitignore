@@ -5,6 +5,7 @@ node_modules/
 .tmp/
 data/
 dist/
+public/ai/background-removal/
 coverage/
 *.sqlite
 *.sqlite3

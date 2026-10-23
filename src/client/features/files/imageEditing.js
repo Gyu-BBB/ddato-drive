@@ -10,6 +10,15 @@ export function renderImageEdits(target, source, operations) {
       paintStroke(context, operation);
       continue;
     }
+    if (operation.type === 'mask') {
+      context.save();
+      context.globalCompositeOperation = 'destination-in';
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+      context.drawImage(operation.mask, 0, 0, target.width, target.height);
+      context.restore();
+      continue;
+    }
     const previous = document.createElement('canvas');
     previous.width = target.width;
     previous.height = target.height;
@@ -55,4 +64,8 @@ export function paintStroke(context, { points, color, width }) {
 
 export function editedImageName(name) {
   return `${name.replace(/\.[^.]+$/, '')} 편집.png`;
+}
+
+export function canvasPng(canvas) {
+  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('이미지를 읽지 못했습니다.')), 'image/png'));
 }

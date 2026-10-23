@@ -1,0 +1,20 @@
+DDATO Drive background removal
+
+U2-Net / U2NETP
+Authors: Xuebin Qin, Zichen Zhang, Chenyang Huang, Masood Dehghan,
+Osmar R. Zaiane, Martin Jagersand.
+Source: https://github.com/xuebinqin/U-2-Net
+License: Apache License 2.0 (included as U2NET-LICENSE.txt).
+The unmodified ONNX model is distributed by rembg:
+https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx
+SHA-256: 309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8
+
+ONNX Runtime Web 1.21.0
+Copyright (c) Microsoft Corporation. All rights reserved.
+Source: https://github.com/microsoft/onnxruntime
+License: MIT License (included as ONNXRUNTIME-LICENSE.txt).
+
+DDATO's JavaScript preprocessing follows the U2NETP input/output
+normalization described in rembg, independently implemented for browser
+canvas data. The model and runtime are not modified. Images are processed
+in a local browser worker; no external inference API is used.

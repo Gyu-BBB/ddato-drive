@@ -29,6 +29,7 @@ This project was built for a personal domain setup such as `ddato.site`, but it 
 - Admin reset for forgotten file/note access passwords
 - Image/video viewer and memo page with context menus, explicit locked-media states, and clickable media folder paths
 - Image editing in the media page: touch/keyboard cropping, 90-degree rotation, colored pen strokes, undo/redo and save as a new PNG beside the original. Processing stays in the browser (up to 24 megapixels); storage quotas still apply. Password-protected images must have password protection removed before editing to avoid creating an unprotected derivative.
+- Browser-only background removal using the lightweight U2NETP model and ONNX Runtime Web. On-demand, cancellable worker inference, undo/redo, transparent PNG output and preserved original resolution. Images are never sent to an external inference API.
 - Document, text, image, audio, video, PDF, spreadsheet, and archive preview support where possible
 - Async document PDF preview jobs with text fallback
 - Admin audit logs and storage/system status dashboard
@@ -285,6 +286,7 @@ npm run test:zip-preview
 npm run test:archive-preview
 npm run test:navigation
 npm run test:media-layout
+npm run test:background-removal
 ```
 
 The smoke test starts a temporary server, uses an isolated temporary data directory, and checks auth, admin controls, uploads, previews, sharing, quotas, trash, passwords, ZIP download, and cross-platform filename behavior.
@@ -294,6 +296,16 @@ Transfer cards show per-file and combined remaining-time estimates using current
 The navigation browser test also uses an isolated server/storage directory. It requires Google Chrome installed (or a compatible installed browser selected with `PLAYWRIGHT_CHANNEL`) and verifies desktop/mobile history, deep links, admin access, public shares and uninterrupted uploads during folder navigation.
 
 The media layout browser test uses the same browser setup with isolated storage. It checks wide, portrait and square images across desktop, mobile and landscape viewports, including screenshot pixel checks that all four corners remain visible. Editor checks cover rotation, cropping, touch/mouse pen strokes, undo/redo, PNG output pixels, unchanged originals, quota failures and retry, discard confirmation and protected-file restrictions.
+
+The background-removal test runs the real model in Chrome against an upstream public test image (downloaded into `.tmp` on first test execution). It checks desktop and mobile-touch inference, cancellation, asset failure/retry, undo/redo, transparent PNG pixels, original preservation, unsupported-browser feedback, worker cleanup and same-origin-only browser traffic. It does not use live user files.
+
+## Background Removal
+
+`npm run build`, `npm run dev` and `npm run dev:web` prepare the pinned model, runtime and license files automatically. The initial build needs Internet access to download the 4.4 MB U2NETP model and license texts. The model is SHA-256 verified; runtime binaries come from the pinned `onnxruntime-web@1.21.0` installation. Generated assets live in the ignored `public/ai/background-removal/` directory and are copied to `dist` by Vite. Repeated builds reuse the local model. Do not commit these generated binaries.
+
+The browser downloads all model/runtime assets from this drive's own origin when background removal is requested. There is no external image upload, API key or paid inference service. A dedicated, single-threaded WASM worker avoids blocking the editor and is terminated after success, failure, cancellation, dialog closure or the three-minute timeout. Only a 320px inference input and small alpha masks are retained for history; RGB detail and existing transparency stay at the original image resolution. Difficult subjects, hair or low-contrast backgrounds can require manual correction; U2NETP prioritizes device resource usage over maximum segmentation quality.
+
+Modern Web Workers, OffscreenCanvas, ImageBitmap and WebAssembly/SIMD support are required. Unsupported browsers show a recoverable error while ordinary image editing remains usable. CSP permits WASM compilation via `wasm-unsafe-eval`, but not general JavaScript `unsafe-eval`; external model hosts and cross-origin isolation are not enabled. See [background-removal notices](docs/background-removal-notices.txt) for model/runtime attribution. License files are distributed with the assets and available through the editor's information link.
 
 ## Page URLs
 

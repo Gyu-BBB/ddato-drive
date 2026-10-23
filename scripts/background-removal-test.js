@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { normalizedAlphaMask, normalizedImageTensor } from '../src/client/features/files/backgroundRemoval/modelPixels.js';
+import { removeImageBackground } from '../src/client/features/files/backgroundRemoval/backgroundRemoval.js';
+
+const normalized = normalizedImageTensor(new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 0]));
+assert.equal(normalized.length, 6);
+assert(Math.abs(normalized[0] - (1 - 0.485) / 0.229) < 1e-5);
+assert(Math.abs(normalized[3] - (1 - 0.456) / 0.224) < 1e-5);
+assert([...normalizedImageTensor(new Uint8ClampedArray(16))].every(Number.isFinite));
+assert.deepEqual([...normalizedAlphaMask(new Float32Array([0, 0.5, 1]))].filter((_, i) => i % 4 === 3), [0, 128, 255]);
+assert.deepEqual([...normalizedAlphaMask(new Float32Array([0, 0]))].filter((_, i) => i % 4 === 3), [0, 0]);
+assert.deepEqual([...normalizedAlphaMask(new Float32Array([1, 1]))].filter((_, i) => i % 4 === 3), [255, 255]);
+assert.throws(() => normalizedAlphaMask(new Float32Array([NaN])));
+
+const blob = new Blob(['fixture'], { type: 'image/png' });
+let worker;
+const createWorker = () => (worker = { postMessage(data) { this.input = data; }, terminate() { this.terminated = true; } });
+const progress = [];
+const success = removeImageBackground(blob, { createWorker, onProgress: stage => progress.push(stage) });
+assert.equal(worker.input.blob, blob);
+worker.onmessage({ data: { type: 'progress', stage: 'processing' } });
+worker.onmessage({ data: { type: 'result', blob } });
+assert.equal(await success, blob);
+assert(worker.terminated);
+assert.deepEqual(progress, ['processing']);
+
+const controller = new AbortController();
+const canceled = removeImageBackground(blob, { createWorker, signal: controller.signal });
+controller.abort();
+await assert.rejects(canceled, { name: 'AbortError' });
+assert(worker.terminated);
+await assert.rejects(removeImageBackground(blob, { signal: controller.signal, createWorker: () => { throw new Error('must not create worker'); } }), { name: 'AbortError' });
+const failed = removeImageBackground(blob, { createWorker });
+worker.onmessage({ data: { type: 'error', message: 'fixture failure' } });
+await assert.rejects(failed, /fixture failure/);
+assert(worker.terminated);
+const crash = removeImageBackground(blob, { createWorker });
+worker.onerror({ preventDefault() {} });
+await assert.rejects(crash, /최신 브라우저/);
+assert(worker.terminated);
+console.log('Background-removal unit tests passed: normalization, alpha masks, success, cancellation and worker cleanup.');

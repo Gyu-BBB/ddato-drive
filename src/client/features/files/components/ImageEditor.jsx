@@ -1,4 +1,4 @@
-import { Check, Crop, Loader2, Pencil, Redo2, RotateCcw, RotateCw, Save, Undo2, X } from 'lucide-react';
+import { Check, Crop, Eraser, Info, Loader2, Pencil, Redo2, RotateCcw, RotateCw, Save, Undo2, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactCrop from 'react-image-crop';
@@ -6,7 +6,9 @@ import 'react-image-crop/dist/ReactCrop.css';
 import './imageEditor.css';
 import { Button } from '../../../shared/components/Button.jsx';
 import { filesApi } from '../filesApi.js';
-import { editedImageName, MAX_EDIT_PIXELS, paintStroke, renderImageEdits } from '../imageEditing.js';
+import { canvasPng, editedImageName, MAX_EDIT_PIXELS, paintStroke, renderImageEdits } from '../imageEditing.js';
+import { removeImageBackground } from '../backgroundRemoval/backgroundRemoval.js';
+import { BACKGROUND_ASSET_PATH, MODEL_INPUT_SIZE } from '../backgroundRemoval/config.js';
 
 const initialCrop = () => ({ unit: '%', x: 10, y: 10, width: 80, height: 80 });
 const colors = ['#ff3b30', '#ffcc00', '#34c759', '#007aff', '#ffffff', '#000000'];
@@ -16,6 +18,8 @@ export function ImageEditor({ file, onClose, onSaved }) {
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
   const strokeRef = useRef(null);
+  const removalRef = useRef(null);
+  const masksRef = useRef(new Set());
   const [source, setSource] = useState(null);
   const [history, setHistory] = useState({ past: [], future: [] });
   const [tool, setTool] = useState('pen');
@@ -25,9 +29,23 @@ export function ImageEditor({ file, onClose, onSaved }) {
   const [name, setName] = useState(editedImageName(file.name));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState('');
   const [dimensions, setDimensions] = useState({ width: 1, height: 1 });
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const dirty = history.past.length > 0;
+
+  useEffect(() => () => {
+    removalRef.current?.abort();
+    for (const mask of masksRef.current) mask.close();
+    masksRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    const used = new Set([...history.past, ...history.future].filter(item => item.type === 'mask').map(item => item.mask));
+    for (const mask of masksRef.current) {
+      if (!used.has(mask)) { mask.close(); masksRef.current.delete(mask); }
+    }
+  }, [history]);
 
   useEffect(() => {
     let active = true;
@@ -70,14 +88,17 @@ export function ImageEditor({ file, onClose, onSaved }) {
   }, []);
 
   function close() {
-    if (!saving && (!dirty || window.confirm('편집 내용을 저장하지 않고 닫을까요?'))) onClose();
+    if (!saving && (!dirty || window.confirm('편집 내용을 저장하지 않고 닫을까요?'))) {
+      removalRef.current?.abort();
+      onClose();
+    }
   }
 
   function handleKeys(event) {
     event.stopPropagation();
     if (event.key === 'Escape') { event.preventDefault(); close(); }
     if (event.key === 'Tab') {
-      const controls = [...dialogRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), [tabindex="0"]')];
+      const controls = [...dialogRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]')];
       const first = controls[0];
       const last = controls.at(-1);
       if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
@@ -99,7 +120,7 @@ export function ImageEditor({ file, onClose, onSaved }) {
   }
 
   function startStroke(event) {
-    if (tool !== 'pen' || !source || saving || event.button !== 0 || strokeRef.current) return;
+    if (tool !== 'pen' || !source || saving || removalRef.current || event.button !== 0 || strokeRef.current) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     strokeRef.current = { type: 'pen', color, width: penWidth * dimensions.width / displayWidth, points: [point(event)], pointerId: event.pointerId };
@@ -131,14 +152,46 @@ export function ImageEditor({ file, onClose, onSaved }) {
     setTool('pen');
   }
 
+  async function removeBackground() {
+    if (!source || saving || removalRef.current || strokeRef.current) return;
+    if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof WebAssembly === 'undefined') {
+      setError('이 브라우저에서는 배경 제거를 지원하지 않습니다. 최신 브라우저에서 다시 시도해 주세요.');
+      return;
+    }
+    const controller = new AbortController();
+    removalRef.current = controller;
+    setRemoving('loading');
+    setError('');
+    try {
+      const input = document.createElement('canvas');
+      input.width = input.height = MODEL_INPUT_SIZE;
+      const context = input.getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, input.width, input.height);
+      context.drawImage(canvasRef.current, 0, 0, input.width, input.height);
+      const blob = await canvasPng(input);
+      input.width = input.height = 0;
+      const result = await removeImageBackground(blob, { signal: controller.signal, onProgress: setRemoving });
+      const mask = await createImageBitmap(result);
+      if (controller.signal.aborted) { mask.close(); return; }
+      masksRef.current.add(mask);
+      commit({ type: 'mask', mask });
+      setTool('pen');
+    } catch (nextError) {
+      if (!controller.signal.aborted) setError(nextError.message || '배경을 제거하지 못했습니다.');
+    } finally {
+      if (removalRef.current === controller) { removalRef.current = null; setRemoving(''); }
+    }
+  }
+
   async function save() {
-    if (saving || !source || !dirty) return;
+    if (saving || removalRef.current || !source || !dirty) return;
     const filename = name.trim();
     if (!filename || /[\\/\x00-\x1f]/.test(filename)) { setError('올바른 파일 이름을 입력해 주세요.'); return; }
     setSaving(true);
     setError('');
     try {
-      const blob = await new Promise((resolve, reject) => canvasRef.current.toBlob(value => value ? resolve(value) : reject(new Error('이미지를 저장하지 못했습니다.')), 'image/png'));
+      const blob = await canvasPng(canvasRef.current);
       const outputName = /\.png$/i.test(filename) ? filename : `${filename}.png`;
       const result = await filesApi.upload({ file: new File([blob], outputName, { type: 'image/png' }), parentId: file.parentId, ownerId: file.ownerId });
       await onSaved(result.file);
@@ -151,18 +204,20 @@ export function ImageEditor({ file, onClose, onSaved }) {
   const scale = Math.min(1, viewport.width / dimensions.width, viewport.height / dimensions.height);
   const displayWidth = Math.max(1, dimensions.width * scale);
   const displayHeight = Math.max(1, dimensions.height * scale);
-  const disabled = !source || saving;
+  const disabled = !source || saving || Boolean(removing);
 
   return createPortal(<div className="modal-backdrop image-editor-backdrop">
     <section ref={dialogRef} className="image-editor" role="dialog" aria-modal="true" aria-labelledby="image-editor-title" tabIndex={-1} onKeyDown={handleKeys}>
       <header className="image-editor-header">
         <strong id="image-editor-title">이미지 편집</strong>
         <span title={file.name}>{file.name}</span>
+        <a className="image-editor-notices" href={`${BACKGROUND_ASSET_PATH}NOTICE.txt`} target="_blank" rel="noreferrer" title="오픈소스 정보" aria-label="오픈소스 정보"><Info size={17} /></a>
         <Button icon={X} iconOnly onClick={close} disabled={saving}>편집 닫기</Button>
       </header>
       <div className="image-editor-tools" role="toolbar" aria-label="이미지 편집 도구">
         <Button icon={Crop} iconOnly aria-pressed={tool === 'crop'} disabled={disabled} onClick={() => setTool('crop')}>자르기</Button>
         <Button icon={Pencil} iconOnly aria-pressed={tool === 'pen'} disabled={disabled} onClick={() => setTool('pen')}>펜</Button>
+        <Button icon={Eraser} iconOnly disabled={disabled} onClick={removeBackground}>배경 제거</Button>
         <Button icon={RotateCcw} iconOnly disabled={disabled} onClick={() => commit({ type: 'rotate', direction: -1 })}>왼쪽으로 회전</Button>
         <Button icon={RotateCw} iconOnly disabled={disabled} onClick={() => commit({ type: 'rotate', direction: 1 })}>오른쪽으로 회전</Button>
         <Button icon={Undo2} iconOnly disabled={disabled || !history.past.length} onClick={() => { setHistory(current => ({ past: current.past.slice(0, -1), future: [current.past.at(-1), ...current.future] })); setCrop(initialCrop()); }}>되돌리기</Button>
@@ -178,6 +233,11 @@ export function ImageEditor({ file, onClose, onSaved }) {
         <span className="image-editor-dimensions">{source ? `${dimensions.width} × ${dimensions.height}` : ''}</span>
       </div>
       {error ? <div className="error-banner" role="alert">{error}</div> : null}
+      {removing ? <div className="image-editor-processing" role="status">
+        <Loader2 size={16} className="upload-spinner" />
+        <span>{removing === 'loading' ? '배경 제거 모델 불러오는 중' : '배경 제거 중'}</span>
+        <Button icon={X} iconOnly onClick={() => removalRef.current?.abort()}>배경 제거 취소</Button>
+      </div> : null}
       <div ref={stageRef} className={`image-editor-stage ${tool === 'pen' ? 'pen-mode' : ''}`}>
         {!source && !error ? <Loader2 className="upload-spinner" aria-label="이미지 불러오는 중" /> : null}
         <ReactCrop crop={tool === 'crop' ? crop : undefined} onChange={(_, percent) => setCrop(percent)} disabled={tool !== 'crop' || disabled} minWidth={8} minHeight={8} keepSelection style={{ display: source ? 'inline-block' : 'none' }}>
