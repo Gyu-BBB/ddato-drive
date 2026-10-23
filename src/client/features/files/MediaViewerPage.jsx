@@ -1,4 +1,4 @@
-import { Download, Expand, Film, Image as ImageIcon, Loader2, LockKeyhole, MoreHorizontal, RefreshCcw, Search, UnlockKeyhole, Video } from "lucide-react";
+import { Download, Expand, Film, Image as ImageIcon, Loader2, LockKeyhole, MoreHorizontal, Pencil, RefreshCcw, Search, UnlockKeyhole, Video } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
@@ -14,6 +14,7 @@ import { ShareDialog } from './components/ShareDialog.jsx';
 import { MoveDialog } from './components/MoveDialog.jsx';
 import { useMediaFileActions } from './useMediaFileActions.js';
 import { useAuth } from '../auth/AuthProvider.jsx';
+import { ImageEditor } from './components/ImageEditor.jsx';
 
 const kindOptions = [
   { id: "", label: "전체", icon: Film },
@@ -30,6 +31,7 @@ export function MediaViewerPage({ onOpenLocation }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fullscreenFile, setFullscreenFile] = useState(null);
+  const [editingFile, setEditingFile] = useState(null);
   const [unlockFile, setUnlockFile] = useState(null);
   const [unlockError, setUnlockError] = useState('');
   const actions = useMediaFileActions({ onChanged: loadMedia, onError: setError, onOpenLocation,
@@ -59,6 +61,7 @@ export function MediaViewerPage({ onOpenLocation }) {
     function handleKeyDown(event) {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
       if (fullscreenFile) return;
+      if (editingFile) return;
       if (unlockFile) return;
       if (actions.hasOverlay) return;
       if (!selectedFile) return;
@@ -76,7 +79,7 @@ export function MediaViewerPage({ onOpenLocation }) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [files, selectedFile, fullscreenFile, unlockFile, actions.hasOverlay]);
+  }, [files, selectedFile, fullscreenFile, editingFile, unlockFile, actions.hasOverlay]);
 
   function requestUnlock(file) {
     setUnlockError('');
@@ -216,6 +219,7 @@ export function MediaViewerPage({ onOpenLocation }) {
                 </div>
                 <div className="media-detail-actions">
                   <Button icon={MoreHorizontal} iconOnly disabled={actions.busy} onClick={(event) => actions.openMenu(event, selectedFile)}>파일 작업</Button>
+                  {isImageFile(selectedFile) ? <Button icon={Pencil} iconOnly disabled={selectedFile.passwordProtected} title={selectedFile.passwordProtected ? '암호 보호를 해제한 후 편집할 수 있습니다.' : '이미지 편집'} onClick={() => setEditingFile(selectedFile)}>이미지 편집</Button> : null}
                   <Button icon={Expand} onClick={() => openFullscreen(selectedFile)}>전체 화면</Button>
                   <Button icon={Download} onClick={downloadSelected}>다운로드</Button>
                 </div>
@@ -242,6 +246,7 @@ export function MediaViewerPage({ onOpenLocation }) {
       </div>
 
       {fullscreenFile ? <MediaFullscreen file={fullscreenFile} onClose={() => setFullscreenFile(null)} /> : null}
+      {editingFile ? <ImageEditor file={editingFile} onClose={() => setEditingFile(null)} onSaved={async (file) => { setEditingFile(null); await loadMedia(); setSelectedId(file.id); }} /> : null}
       {unlockFile ? <PasswordDialog title="잠금 파일 암호 입력" body={unlockError || `${unlockFile.name}의 암호를 입력하세요.`} confirmLabel="잠금 해제" onSubmit={unlockMedia} onClose={() => setUnlockFile(null)} /> : null}
       <DriveContextMenu menu={actions.menu} onClose={actions.closeMenu} />
       <ShareDialog files={actions.shareFiles} onClose={actions.closeShare} />

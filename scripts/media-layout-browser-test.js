@@ -109,6 +109,82 @@ try {
     await page.locator('.media-fullscreen-shell img').waitFor();
     await page.keyboard.press('f');
     await page.locator('.media-fullscreen-shell').waitFor({ state: 'detached' });
+    for (const [width, height] of [[1440, 900], [390, 844], [360, 640], [844, 390], [667, 375]]) {
+      await page.setViewportSize({ width, height });
+      await page.locator('.media-card').filter({ hasText: 'wide.png' }).click();
+      await page.getByRole('button', { name: '이미지 편집', exact: true }).click();
+      const editor = page.getByRole('dialog', { name: '이미지 편집', exact: true });
+      await editor.getByRole('button', { name: '오른쪽으로 회전', exact: true }).waitFor();
+      await page.waitForFunction(() => document.querySelector('.image-editor canvas')?.width === 3200);
+      await editor.getByRole('button', { name: '오른쪽으로 회전', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.image-editor canvas').height === 3200);
+      await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.image-editor canvas').width === 3200);
+      await editor.getByRole('button', { name: '다시 실행', exact: true }).click();
+      await editor.getByRole('button', { name: '자르기', exact: true }).click();
+      await editor.getByRole('button', { name: '자르기 적용', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.image-editor canvas').width === 320 && document.querySelector('.image-editor canvas').height === 2560);
+      const canvas = editor.locator('canvas');
+      const rect = await canvas.boundingBox();
+      assert(rect.width > 1 && rect.height > 20);
+      assert(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= width && rect.y + rect.height <= height);
+      await page.touchscreen.tap(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await page.waitForFunction(() => {
+        const canvas = document.querySelector('.image-editor canvas');
+        const pixel = canvas.getContext('2d').getImageData(160, 1280, 1, 1).data;
+        return pixel[0] === 255 && pixel[1] === 59 && pixel[2] === 48;
+      });
+      await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.image-editor canvas').getContext('2d').getImageData(160, 1280, 1, 1).data[0] === 200);
+      await editor.getByRole('button', { name: '다시 실행', exact: true }).click();
+      await editor.getByLabel('펜 굵기').fill('12');
+      await editor.getByRole('button', { name: '펜 색상 #007aff', exact: true }).click();
+      await page.mouse.move(rect.x + rect.width * 0.25, rect.y + rect.height * 0.25);
+      await page.mouse.down();
+      await page.mouse.move(rect.x + rect.width * 0.75, rect.y + rect.height * 0.3, { steps: 12 });
+      await page.mouse.up();
+      await editor.getByLabel('편집 파일 이름').fill(width === 844 ? `edited-${width}` : `edited-${width}.png`);
+      await page.screenshot({ path: path.join(shots, `editor-${width}x${height}.png`) });
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      if (width === 1440) {
+        await page.route('**/api/files/upload', route => route.fulfill({ status: 413, contentType: 'application/json', body: JSON.stringify({ error: '사용 가능한 저장 공간이 부족합니다.' }) }), { times: 1 });
+        await editor.getByRole('button', { name: '새 파일로 저장', exact: true }).click();
+        await editor.getByRole('alert').filter({ hasText: '저장 공간' }).waitFor();
+        assert(await editor.getByRole('button', { name: '새 파일로 저장', exact: true }).isEnabled());
+      }
+      await editor.getByRole('button', { name: '새 파일로 저장', exact: true }).click();
+      await editor.waitFor({ state: 'detached' });
+      const listing = await (await api.get(`${base}/api/files?parentId=${parentId}`)).json();
+      const edited = listing.files.find(file => file.name === `edited-${width}.png`);
+      assert(edited, 'edited image must be saved beside its original');
+      const saved = PNG.sync.read(await (await api.get(`${base}/api/files/${edited.id}/download`)).body());
+      assert.equal(saved.width, 320); assert.equal(saved.height, 2560);
+      const center = (1280 * saved.width + 160) * 4;
+      assert.deepEqual([...saved.data.subarray(center, center + 3)], [255, 59, 48], 'saved PNG retains pen edits');
+      for (const [corner, sourceCorner] of [2, 0, 3, 1].entries()) {
+        const x = Math.floor(saved.width * (corner % 2 ? 0.98 : 0.02));
+        const y = Math.floor(saved.height * (corner >= 2 ? 0.98 : 0.02));
+        const offset = (y * saved.width + x) * 4;
+        assert.deepEqual([...saved.data.subarray(offset, offset + 3)], colors[sourceCorner], 'crop and clockwise rotation preserve the correct image corners');
+      }
+      const original = await (await api.get(`${base}/api/files/${files[0].id}/download`)).body();
+      assert.deepEqual(original, fixture(3200, 400), 'editing must not modify the original');
+      console.log(`${width}x${height}: rotate, crop, touch/mouse pen, undo/redo and new PNG save passed; original unchanged.`);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('.media-card').filter({ hasText: 'wide.png' }).click();
+    await page.getByRole('button', { name: '이미지 편집', exact: true }).click();
+    await page.getByRole('dialog', { name: '이미지 편집', exact: true }).getByRole('button', { name: '오른쪽으로 회전', exact: true }).click();
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.getByRole('button', { name: '편집 닫기', exact: true }).click();
+    assert(await page.getByRole('dialog', { name: '이미지 편집', exact: true }).isVisible());
+    page.once('dialog', dialog => dialog.accept());
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: '이미지 편집', exact: true }).waitFor({ state: 'detached' });
+    assert((await api.put(`${base}/api/files/${files[0].id}/password`, { data: { password: 'test-lock' }, headers })).ok());
+    await page.reload();
+    await page.locator('.media-card').filter({ hasText: 'wide.png' }).click();
+    assert(await page.getByRole('button', { name: '이미지 편집', exact: true }).isDisabled());
     assert.deepEqual(errors, []);
     console.log('Media layout/editor browser tests passed, including quota failure/retry, discard confirmation, locked images, fullscreen exit and zero runtime errors.');
   }
