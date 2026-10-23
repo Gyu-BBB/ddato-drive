@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronLeft, Copy, Download, Edit3, FolderOpen, FolderPlus, KeyRound, LockKeyhole, MoveRight, RefreshCcw, Share2, Square, SquareCheckBig, Trash2, UnlockKeyhole, Upload } from "lucide-react";
+import { ArrowLeft, ChevronLeft, Copy, Download, Edit3, FolderOpen, FolderPlus, Info, KeyRound, LockKeyhole, MoveRight, RefreshCcw, Share2, Square, SquareCheckBig, Trash2, UnlockKeyhole, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
@@ -67,6 +67,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   const [dragActive, setDragActive] = useState(false);
   const [dropTargetId, setDropTargetId] = useState("");
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(true);
+  const [sidePanelMode, setSidePanelMode] = useState("preview");
   const dragDepthRef = useRef(0);
   const currentDragIdsRef = useRef([]);
   const dragImageCleanupRef = useRef(null);
@@ -106,8 +107,8 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   useEffect(() => () => dragImageCleanupRef.current?.(), []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => loadFiles(), query.trim() ? 180 : 0);
     if (folderLoading || folderError) return;
+    const timer = window.setTimeout(() => loadFiles(), query.trim() ? 180 : 0);
     return () => {
       window.clearTimeout(timer);
       fileLoadRequestRef.current++;
@@ -125,8 +126,8 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   }, [parentId, ownerId, trashMode]);
 
   const filteredFiles = useMemo(() => {
-    const search = query.trim().toLowerCase();
     if (folderLoading || folderError) return [];
+    const search = query.trim().toLowerCase();
     if (!trashMode || !search) return files;
     return files.filter((file) => String(file.name || "").toLowerCase().includes(search));
   }, [files, query, trashMode, folderLoading, folderError]);
@@ -142,7 +143,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
   }, [sidePanelWidth]);
 
   useEffect(() => {
-    setSidePanelCollapsed(!selectedFile);
+    if (!selectedFile) setSidePanelCollapsed(true);
   }, [selectedFile?.id]);
 
 	  useEffect(() => {
@@ -157,41 +158,41 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 	  }, [homeSignal, trashMode]);
 
   async function loadFiles() {
-    setBusy(true);
     if (folderLoading || folderError) return;
     const requestId = ++fileLoadRequestRef.current;
+    setBusy(true);
     setError("");
     try {
       if (trashMode) {
         const result = await filesApi.trash({ ownerId });
-	        rememberFiles(result.files);
         if (requestId !== fileLoadRequestRef.current) return;
+	        rememberFiles(result.files);
 	        setFiles(result.files);
 	        setOwner(result.owner);
 	        setUsageBytes(result.usageBytes);
 	        setProjectQuotaBytes(result.projectQuotaBytes ?? null);
 	        await refresh();
-	        setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
         if (requestId !== fileLoadRequestRef.current) return;
+	        setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
 	        setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
 	        return;
 	      }
 
       const search = query.trim();
       const result = await filesApi.list({ parentId: search ? null : parentId, ownerId, search });
-	      rememberFiles(result.files);
       if (requestId !== fileLoadRequestRef.current) return;
+	      rememberFiles(result.files);
 	      setFiles(result.files);
 	      setOwner(result.owner);
 	      setUsageBytes(result.usageBytes);
 	      setProjectQuotaBytes(result.projectQuotaBytes ?? null);
 	      await refresh();
-	      setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
       if (requestId !== fileLoadRequestRef.current) return;
+	      setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
 	      setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
 	    } catch (nextError) {
-      setError(nextError.message || "파일 목록을 불러오지 못했습니다.");
       if (requestId !== fileLoadRequestRef.current) return;
+      setError(nextError.message || "파일 목록을 불러오지 못했습니다.");
     } finally {
       if (requestId === fileLoadRequestRef.current) setBusy(false);
     }
@@ -702,13 +703,23 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     window.localStorage.setItem(SORT_DIRECTION_STORAGE_KEY, nextDirection);
   }
 
-	  function selectFile(file, event = null) {
-	    event?.preventDefault();
-	    rememberFiles([file]);
-	    selectionAnchorIdRef.current = file.id;
-	    setActiveFileId(file.id);
-	    setSidePanelCollapsed(false);
-	  }
+  function selectFile(file, event = null) {
+    event?.preventDefault();
+    rememberFiles([file]);
+    selectionAnchorIdRef.current = file.id;
+    setActiveFileId(file.id);
+    if (file.type !== "folder") {
+      setSidePanelMode("preview");
+      setSidePanelCollapsed(false);
+    }
+  }
+
+  function showFileInfo(file) {
+    rememberFiles([file]);
+    setActiveFileId(file.id);
+    setSidePanelMode("info");
+    setSidePanelCollapsed(false);
+  }
 
   function toggleFileSelection(file) {
     rememberFiles([file]);
@@ -741,9 +752,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 	      const currentIndex = activeIndex >= 0 ? activeIndex : direction > 0 ? -1 : visibleFiles.length;
 	      const nextIndex = Math.max(0, Math.min(visibleFiles.length - 1, currentIndex + direction));
 	      const nextFile = visibleFiles[nextIndex];
-	      selectionAnchorIdRef.current = nextFile.id;
-	      setActiveFileId(nextFile.id);
-	      setSidePanelCollapsed(false);
+        selectFile(nextFile);
 	      focusFileItem(nextFile.id);
 	      return;
 	    }
@@ -869,6 +878,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
         x,
         y,
         items: [
+          { id: "info", label: "파일 정보", icon: Info, onClick: run(() => showFileInfo(file)) },
           { id: "restore", label: "복원", icon: RotateCcw, disabled: !hasSelection, onClick: run(() => restoreSelected(selection)) },
           { id: "delete", label: "영구 삭제", icon: Trash2, disabled: !hasSelection, onClick: run(() => purgeSelected(selection)) }
         ]
@@ -880,6 +890,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       y,
       items: [
         { id: "open", label: "열기", icon: FolderOpen, disabled: !single || single.type !== "folder", onClick: run(() => openFolder(single)) },
+        { id: "info", label: "파일 정보", icon: Info, onClick: run(() => showFileInfo(file)) },
         { id: "download", label: "다운로드", icon: Download, disabled: !hasSelection, onClick: run(() => downloadFiles(selection)) },
         { id: "share", label: "공유", icon: Share2, disabled: !hasSelection, onClick: run(() => openShareDialog(selection)) },
         { id: "duplicate", label: "복제", icon: Copy, disabled: !hasSelection, onClick: run(() => duplicateSelected(selection)) },
@@ -1053,7 +1064,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       {isSidePanelOpen ? (
         <aside className="side-panel">
           <button className="side-panel-resize-handle" type="button" aria-label="패널 너비 조절" onPointerDown={startSidePanelResize} />
-          {viewMode === "gallery" || viewMode === "column" || trashMode ? (
+          {sidePanelMode === "info" || selectedFile?.type === "folder" || viewMode === "gallery" || viewMode === "column" || trashMode ? (
 	            <MetadataPane
 	              file={selectedFile}
 	              onClose={() => setActiveFileId("")}

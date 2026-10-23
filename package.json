@@ -18,7 +18,7 @@
     "test:trash-retention": "node --disable-warning=ExperimentalWarning scripts/trash-retention-test.js",
     "test:drag-move": "node scripts/drag-move-test.js",
     "test:resources": "node --disable-warning=ExperimentalWarning scripts/server-resource-test.js",
-    "test:navigation": "npm run build && node scripts/navigation-test.js"
+    "test:navigation": "npm run build && node scripts/navigation-test.js && node scripts/navigation-browser-test.js"
   },
   "dependencies": {
     "express": "^5.2.1",
