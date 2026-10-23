@@ -1,10 +1,12 @@
 import { HardDrive, LogIn } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { Button } from "../../shared/components/Button.jsx";
 import { useAuth } from "./AuthProvider.jsx";
 
 export function AdminLoginPage() {
   const { user, login, logout } = useAuth();
+  const navigate = useNavigate();
   const [id, setId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -12,9 +14,9 @@ export function AdminLoginPage() {
 
   useEffect(() => {
     if (user?.role === "admin") {
-      window.location.replace("/");
+      navigate("/", { replace: true });
     }
-  }, [user?.role]);
+  }, [user?.role, navigate]);
 
   async function handleSubmit(event) {
     event.preventDefault();

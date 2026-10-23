@@ -1,11 +1,13 @@
 import { FileText, Folder, HardDrive, Images, LogOut, Shield, Trash2, UserRound } from "lucide-react";
 import { useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { AdminPage } from "../features/admin/AdminPage.jsx";
 import { AdminLoginPage } from "../features/auth/AdminLoginPage.jsx";
 import { AuthProvider, useAuth } from "../features/auth/AuthProvider.jsx";
 import { LoginPage } from "../features/auth/LoginPage.jsx";
 import { ProfileDialog } from "../features/auth/ProfileDialog.jsx";
-import { DrivePage } from "../features/files/DrivePage.jsx";
+import { DriveRoute } from "./DriveRoute.jsx";
+import { appPage, drivePath, normalizePathname } from "./appRoutes.js";
 import { MediaViewerPage } from "../features/files/MediaViewerPage.jsx";
 import { PublicSharePage } from "../features/files/PublicSharePage.jsx";
 import { NotesPage } from "../features/notes/NotesPage.jsx";
@@ -13,28 +15,25 @@ import { IconButton } from "../shared/components/IconButton.jsx";
 import { DownloadQueue } from "../features/files/components/DownloadQueue.jsx";
 
 export function App() {
-  const publicShareToken = getPublicShareToken();
-  if (publicShareToken) return <><PublicSharePage token={publicShareToken} /><DownloadQueue /></>;
-
   return (
-    <AuthProvider>
-      <AppFrame />
-      <DownloadQueue />
-    </AuthProvider>
+    <Routes>
+      <Route path="/share/:token" element={<ShareRoute />} />
+      <Route path="*" element={<AuthProvider><AppFrame /><DownloadQueue /></AuthProvider>} />
+    </Routes>
   );
 }
-
-function getPublicShareToken() {
-  const match = window.location.pathname.match(/^\/share\/([^/]+)$/);
-  return match ? decodeURIComponent(match[1]) : "";
+function ShareRoute() {
+  const { token } = useParams();
+  return <><PublicSharePage key={token} token={token} /><DownloadQueue /></>;
 }
 
 function AppFrame() {
   const { user, loading, logout } = useAuth();
-  const isAdminLoginPath = ["/admin/login", "/admin-login"].includes(normalizePathname(window.location.pathname));
-  const [view, setView] = useState("drive");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isAdminLoginPath = ["/admin/login", "/admin-login"].includes(normalizePathname(location.pathname));
+  const view = appPage(location.pathname);
   const [homeSignal, setHomeSignal] = useState(0);
-  const [driveFolderStack, setDriveFolderStack] = useState([]);
   const [profileOpen, setProfileOpen] = useState(false);
 
   if (loading) {
@@ -55,16 +54,19 @@ function AppFrame() {
   }
 
   const isAdmin = user.role === "admin";
+  if (!view || (view === "admin" && !isAdmin)) return <Navigate to="/" replace />;
 
   function goHome() {
-    setDriveFolderStack([]);
-    setView("drive");
+    if (location.pathname !== "/" || location.search) navigate("/");
     setHomeSignal((value) => value + 1);
   }
 
   function openMediaLocation(file) {
-    setDriveFolderStack(Array.isArray(file.path) ? file.path.map(folder => ({ ...folder, type: 'folder' })) : []);
-    setView('drive');
+    navigate(drivePath(file.path?.at(-1)?.id));
+  }
+
+  function goPage(path) {
+    if (`${location.pathname}${location.search}` !== path) navigate(path);
   }
 
   return (
@@ -78,17 +80,17 @@ function AppFrame() {
           <button data-section="drive" className={view === "drive" ? "nav-item active" : "nav-item"} onClick={goHome} title="홈" aria-label="홈으로 이동">
             <Folder size={18} />
           </button>
-          <button data-section="media" className={view === "media" ? "nav-item active" : "nav-item"} onClick={() => setView("media")} title="이미지/동영상" aria-label="이미지/동영상">
+          <button data-section="media" className={view === "media" ? "nav-item active" : "nav-item"} onClick={() => goPage("/media")} title="이미지/동영상" aria-label="이미지/동영상">
             <Images size={18} />
           </button>
-          <button data-section="notes" className={view === "notes" ? "nav-item active" : "nav-item"} onClick={() => setView("notes")} title="메모장" aria-label="메모장">
+          <button data-section="notes" className={view === "notes" ? "nav-item active" : "nav-item"} onClick={() => goPage("/notes")} title="메모장" aria-label="메모장">
             <FileText size={18} />
           </button>
-          <button data-section="trash" className={view === "trash" ? "nav-item active" : "nav-item"} onClick={() => setView("trash")} title="휴지통" aria-label="휴지통">
+          <button data-section="trash" className={view === "trash" ? "nav-item active" : "nav-item"} onClick={() => goPage("/trash")} title="휴지통" aria-label="휴지통">
             <Trash2 size={18} />
           </button>
           {isAdmin && (
-            <button data-section="admin" className={view === "admin" ? "nav-item active" : "nav-item"} onClick={() => setView("admin")} title="관리" aria-label="관리">
+            <button data-section="admin" className={view === "admin" ? "nav-item active" : "nav-item"} onClick={() => goPage("/admin")} title="관리" aria-label="관리">
               <Shield size={18} />
             </button>
           )}
@@ -106,19 +108,14 @@ function AppFrame() {
         {view === "admin" && isAdmin
           ? <AdminPage />
           : view === "trash"
-            ? <DrivePage trashMode ownerLabel="휴지통" />
+            ? <DriveRoute key="trash" trashMode ownerLabel="휴지통" />
             : view === "media"
               ? <MediaViewerPage onOpenLocation={openMediaLocation} />
               : view === "notes"
                 ? <NotesPage />
-                : <DrivePage homeSignal={homeSignal} initialFolderStack={driveFolderStack} allowAdminPasswordReset={isAdmin} />}
+                : <DriveRoute key="drive" homeSignal={homeSignal} allowAdminPasswordReset={isAdmin} />}
       </section>
       {profileOpen ? <ProfileDialog onClose={() => setProfileOpen(false)} /> : null}
     </main>
   );
-}
-
-function normalizePathname(pathname) {
-  const normalized = String(pathname || "/").replace(/\/+$/, "");
-  return normalized || "/";
 }

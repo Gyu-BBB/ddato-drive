@@ -1,12 +1,14 @@
 import { FolderOpen, Gauge, KeyRound, RefreshCcw, Save, ScrollText, Shield, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
 import { ProgressBar } from "../../shared/components/ProgressBar.jsx";
 import { formatBytes, quotaPercent } from "../../shared/lib/formatBytes.js";
 import { formatDate } from "../../shared/lib/dates.js";
 import { useAuth } from "../auth/AuthProvider.jsx";
-import { DrivePage } from "../files/DrivePage.jsx";
+import { DriveRoute } from "../../app/DriveRoute.jsx";
+import { adminPath, normalizePathname } from "../../app/appRoutes.js";
 import { AdminAuditLog } from "./AdminAuditLog.jsx";
 import { AdminSystemDashboard } from "./AdminSystemDashboard.jsx";
 import { adminApi } from "./adminApi.js";
@@ -20,6 +22,10 @@ const adminTabs = [
 
 export function AdminPage() {
   const { user: currentUser } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const requestedOwner = new URLSearchParams(location.search).get("owner") || "";
+  const activeTab = normalizePathname(location.pathname).split("/")[2] || "system";
   const [users, setUsers] = useState([]);
   const [system, setSystem] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
@@ -27,7 +33,6 @@ export function AdminPage() {
   const [quotaMb, setQuotaMb] = useState("");
   const [unlimited, setUnlimited] = useState(false);
   const [role, setRole] = useState("user");
-  const [activeTab, setActiveTab] = useState("system");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,9 +40,26 @@ export function AdminPage() {
     load();
   }, []);
 
-  const selectedUser = useMemo(() => users.find((user) => user.id === selectedId) || users[0] || null, [users, selectedId]);
+  const selectedUser = useMemo(() => users.find((user) => user.id === (requestedOwner || selectedId)) || users[0] || null, [users, selectedId, requestedOwner]);
   const isAuditTab = activeTab === "audit";
   const isUsersTab = activeTab === "users";
+
+  function changeTab(tab) {
+    const params = new URLSearchParams();
+    if (["users", "files"].includes(tab) && selectedUser) params.set("owner", selectedUser.id);
+    const destination = `${adminPath(tab)}${params.size ? `?${params}` : ""}`;
+    if (destination !== `${location.pathname}${location.search}`) navigate(destination);
+  }
+
+  function selectUser(id) {
+    setSelectedId(id);
+    const params = new URLSearchParams(location.search);
+    if (id) params.set("owner", id);
+    else params.delete("owner");
+    params.delete("folder");
+    const destination = `${location.pathname}${params.size ? `?${params}` : ""}`;
+    if (destination !== `${location.pathname}${location.search}`) navigate(destination);
+  }
 
   useEffect(() => {
     if (!selectedUser) return;
@@ -90,7 +112,7 @@ export function AdminPage() {
   async function createUser(payload) {
     try {
       const result = await adminApi.createUser(payload);
-      setSelectedId(result.user.id);
+      selectUser(result.user.id);
       await load();
     } catch (nextError) {
       setError(nextError.message || "사용자를 추가하지 못했습니다.");
@@ -125,7 +147,7 @@ export function AdminPage() {
     if (!window.confirm(message)) return;
     try {
       await adminApi.deleteUser(selectedUser.id);
-      setSelectedId("");
+      selectUser("");
       await load();
     } catch (nextError) {
       setError(nextError.message || "사용자를 삭제하지 못했습니다.");
@@ -163,7 +185,7 @@ export function AdminPage() {
             {adminTabs.map((tab) => {
               const Icon = tab.icon;
               return (
-                <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)} aria-label={tab.label} title={tab.label}>
+                <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onClick={() => changeTab(tab.id)} aria-label={tab.label} title={tab.label}>
                   <Icon size={17} />
                   <span>{tab.label}</span>
                 </button>
@@ -190,8 +212,8 @@ export function AdminPage() {
           </header>
           {error ? <div className="error-banner page-error">{error}</div> : null}
           {activeTab === "system" ? <SystemTab system={system} onRefresh={load} onSaveDefaultQuota={saveDefaultQuota} busy={busy} /> : null}
-          {activeTab === "users" ? <UsersTab users={users} selectedUser={selectedUser} onSelect={setSelectedId} onCreateUser={createUser} defaultQuotaMb={system?.settings?.defaultQuotaMb || 1024} /> : null}
-          {activeTab === "files" ? <FileAccessTab users={users} selectedUser={selectedUser} onSelect={setSelectedId} /> : null}
+          {activeTab === "users" ? <UsersTab users={users} selectedUser={selectedUser} onSelect={selectUser} onCreateUser={createUser} defaultQuotaMb={system?.settings?.defaultQuotaMb || 1024} /> : null}
+          {activeTab === "files" ? <FileAccessTab users={users} selectedUser={selectedUser} onSelect={selectUser} /> : null}
           {isAuditTab ? <AuditTab logs={auditLogs} onRefresh={load} busy={busy} /> : null}
         </section>
       </section>
@@ -347,7 +369,19 @@ function CreateUserForm({ newId, newPassword, newQuotaMb, creating, onSubmit, on
 }
 
 function FileAccessTab({ users, selectedUser, onSelect }) {
-  const [mode, setMode] = useState("files");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const mode = new URLSearchParams(location.search).get("mode") === "trash" ? "trash" : "files";
+
+  function setMode(value) {
+    const params = new URLSearchParams(location.search);
+    if (value === "trash") params.set("mode", "trash");
+    else params.delete("mode");
+    params.delete("folder");
+    if (selectedUser) params.set("owner", selectedUser.id);
+    const destination = `${location.pathname}${params.size ? `?${params}` : ""}`;
+    if (destination !== `${location.pathname}${location.search}`) navigate(destination);
+  }
 
   if (!selectedUser) {
     return <EmptyState title="열람할 사용자가 없습니다" body="회원가입이 이루어지면 사용자 파일을 관리자 권한으로 확인할 수 있습니다." />;
@@ -379,7 +413,7 @@ function FileAccessTab({ users, selectedUser, onSelect }) {
         <span className="muted">{selectedUser.id} {trashMode ? "휴지통" : "파일"}을 관리자 권한으로 열람합니다.</span>
       </div>
       <div className="admin-file-tab-body">
-        <DrivePage
+        <DriveRoute
           key={`${selectedUser.id}-${mode}`}
           ownerId={selectedUser.id}
           ownerLabel={`${selectedUser.id} ${trashMode ? "휴지통" : "파일"}`}

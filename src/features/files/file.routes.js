@@ -131,7 +131,7 @@ filesRouter.post("/files/download", requireUser, asyncRoute(async (req, res) => 
 
 filesRouter.get("/files/:id", requireUser, asyncRoute((req, res) => {
   const file = fileService.getAccessibleFile(req.user, req.params.id);
-  res.json({ ok: true, file: fileService.serializeFileForRequest(req, file) });
+  res.json({ ok: true, file: fileService.serializeFilesForRequest(req, file.owner_id, [file])[0] });
 }));
 
 filesRouter.get("/files/:id/preview-status", requireUser, asyncRoute((req, res) => {

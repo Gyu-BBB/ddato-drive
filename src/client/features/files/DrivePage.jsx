@@ -41,11 +41,14 @@ const sortOptions = [
   { id: "location", label: "위치" }
 ];
 
-export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, homeSignal = 0, initialFolderStack = [], allowAdminPasswordReset = false }) {
+export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, homeSignal = 0, initialFolderStack = [], allowAdminPasswordReset = false,
+  routedFolderStack = null, routeFolderId, onFolderNavigate = null, folderLoading = false, folderError = "" }) {
   const { user, refresh } = useAuth();
   const inputRef = useRef(null);
   const folderInputRef = useRef(null);
-  const [folderStack, setFolderStack] = useState(() => initialFolderStack);
+  const [localFolderStack, setLocalFolderStack] = useState(() => initialFolderStack);
+  const folderStack = routedFolderStack ?? localFolderStack;
+  const fileLoadRequestRef = useRef(0);
   const previousHomeSignalRef = useRef(homeSignal);
   const [files, setFiles] = useState([]);
   const [knownFiles, setKnownFiles] = useState(() => new Map());
@@ -92,20 +95,41 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     }
   });
 
-  const parentId = folderStack.at(-1)?.id || null;
+  const parentId = routeFolderId === undefined ? folderStack.at(-1)?.id || null : routeFolderId || null;
+
+  function setFolderStack(value) {
+    const nextStack = typeof value === "function" ? value(folderStack) : value;
+    if (onFolderNavigate) onFolderNavigate(nextStack);
+    else setLocalFolderStack(nextStack);
+  }
 
   useEffect(() => () => dragImageCleanupRef.current?.(), []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => loadFiles(), query.trim() ? 180 : 0);
-    return () => window.clearTimeout(timer);
-  }, [parentId, ownerId, query, trashMode]);
+    if (folderLoading || folderError) return;
+    return () => {
+      window.clearTimeout(timer);
+      fileLoadRequestRef.current++;
+    };
+  }, [parentId, ownerId, query, trashMode, folderLoading, folderError]);
+
+  useEffect(() => {
+    setQuery("");
+    setFiles([]);
+    setError("");
+    setSelectedIds([]);
+    setActiveFileId("");
+    setSidePanelCollapsed(true);
+    setContextMenu(null);
+  }, [parentId, ownerId, trashMode]);
 
   const filteredFiles = useMemo(() => {
     const search = query.trim().toLowerCase();
+    if (folderLoading || folderError) return [];
     if (!trashMode || !search) return files;
     return files.filter((file) => String(file.name || "").toLowerCase().includes(search));
-  }, [files, query, trashMode]);
+  }, [files, query, trashMode, folderLoading, folderError]);
   const visibleFiles = useMemo(() => sortFiles(filteredFiles, sortField, sortDirection), [filteredFiles, sortField, sortDirection]);
   const selectedFiles = useMemo(() => selectedIds.map((id) => knownFiles.get(id)).filter(Boolean), [knownFiles, selectedIds]);
   const selectedFile = useMemo(() => knownFiles.get(activeFileId) || files.find((file) => file.id === activeFileId) || null, [files, knownFiles, activeFileId]);
@@ -134,17 +158,21 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 
   async function loadFiles() {
     setBusy(true);
+    if (folderLoading || folderError) return;
+    const requestId = ++fileLoadRequestRef.current;
     setError("");
     try {
       if (trashMode) {
         const result = await filesApi.trash({ ownerId });
 	        rememberFiles(result.files);
+        if (requestId !== fileLoadRequestRef.current) return;
 	        setFiles(result.files);
 	        setOwner(result.owner);
 	        setUsageBytes(result.usageBytes);
 	        setProjectQuotaBytes(result.projectQuotaBytes ?? null);
 	        await refresh();
 	        setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
+        if (requestId !== fileLoadRequestRef.current) return;
 	        setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
 	        return;
 	      }
@@ -152,17 +180,20 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
       const search = query.trim();
       const result = await filesApi.list({ parentId: search ? null : parentId, ownerId, search });
 	      rememberFiles(result.files);
+      if (requestId !== fileLoadRequestRef.current) return;
 	      setFiles(result.files);
 	      setOwner(result.owner);
 	      setUsageBytes(result.usageBytes);
 	      setProjectQuotaBytes(result.projectQuotaBytes ?? null);
 	      await refresh();
 	      setSelectedIds((ids) => ids.filter((id) => result.files.some((file) => file.id === id)));
+      if (requestId !== fileLoadRequestRef.current) return;
 	      setActiveFileId((id) => result.files.some((file) => file.id === id) ? id : "");
 	    } catch (nextError) {
       setError(nextError.message || "파일 목록을 불러오지 못했습니다.");
+      if (requestId !== fileLoadRequestRef.current) return;
     } finally {
-      setBusy(false);
+      if (requestId === fileLoadRequestRef.current) setBusy(false);
     }
   }
 
@@ -954,14 +985,14 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
           sortDirection={sortDirection}
           onSortDirectionChange={toggleSortDirection}
           onRefresh={loadFiles}
-          busy={busy}
+          busy={busy || folderLoading}
           dropTargetId={dropTargetId}
           onDragOverFolder={handleItemDragOverFolder}
           onDragLeaveFolder={handleItemDragLeaveFolder}
           onDropOnFolder={handleItemDropOnFolder}
         />
 
-        {error ? <div className="error-banner page-error">{error}</div> : null}
+        {folderError || error ? <div className="error-banner page-error">{folderError || error}</div> : null}
 
         <div
           className={dragActive ? "drive-content drag-active" : "drive-content"}
@@ -981,7 +1012,9 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
               <span>현재 위치에 업로드됩니다</span>
             </div>
           ) : null}
-          {visibleFiles.length ? (
+          {folderError ? null : folderLoading || (busy && !visibleFiles.length) ? (
+            <div className="empty-state" role="status">불러오는 중...</div>
+          ) : visibleFiles.length ? (
             <FileList
               files={visibleFiles}
               selectedIds={selectedIds}
