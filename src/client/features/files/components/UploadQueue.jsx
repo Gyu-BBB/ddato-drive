@@ -2,6 +2,7 @@ import { CheckCircle2, ChevronDown, ChevronUp, Loader2, PauseCircle, PlayCircle,
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../../../shared/lib/formatBytes.js";
 import { formatPercent } from "../../../shared/lib/formatPercent.js";
+import { currentTransferSpeed, estimateRemainingSeconds, formatRemainingTime, remainingTransfersLabel } from "../../../shared/lib/transferEta.js";
 
 export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, onResume, onRetry, onCancelAll, onPauseAll, onResumeAll, onClearCompleted }) {
   const downloading = direction === "download";
@@ -15,7 +16,7 @@ export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, 
     result.loaded += Number(item.uploadedBytes) || (item.status === "done" ? Number(item.sizeBytes) || 0 : 0);
     result.size += Number(item.sizeBytes) || 0;
     result.unknown ||= item.sizeBytes == null;
-    if (item.status === "uploading" && !(item.speedUpdatedAt && clock - item.speedUpdatedAt > 1500)) result.speed += Number(item.speedBytes) || 0;
+    result.speed += currentTransferSpeed(item, clock);
     return result;
   }, { loaded: 0, size: 0, speed: 0, unknown: false });
 
@@ -79,6 +80,7 @@ export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, 
       <div className="transfer-summary transfer-metrics">
         {formatBytes(totals.loaded)} / {totals.unknown ? "크기 확인 중" : formatBytes(totals.size)}
         {summary.active ? ` · ${formatBytes(totals.speed)}/s` : ""}
+        {summary.active ? <span className="transfer-eta">전체 {remainingTransfersLabel(uploads, clock)}</span> : null}
       </div>
 
       {collapsed && summary.active ? (
@@ -96,7 +98,8 @@ export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, 
                 <span>
                   <strong>{upload.name || upload.displayName}</strong>
                   <span>{upload.error || (downloading ? uploadLabel(upload).replace("업로드됨", "다운로드됨") : upload.detail || uploadLabel(upload))}</span>
-                  <span className="transfer-metrics">{formatBytes(Number(upload.uploadedBytes) || (upload.status === "done" ? upload.sizeBytes : 0))} / {upload.sizeBytes == null ? "크기 확인 중" : formatBytes(upload.sizeBytes)}{upload.status === "uploading" ? ` · ${formatBytes(upload.speedUpdatedAt && clock - upload.speedUpdatedAt > 1500 ? 0 : upload.speedBytes || 0)}/s` : ""}</span>
+                  <span className="transfer-metrics">{formatBytes(Number(upload.uploadedBytes) || (upload.status === "done" ? upload.sizeBytes : 0))} / {upload.sizeBytes == null ? "크기 확인 중" : formatBytes(upload.sizeBytes)}{upload.status === "uploading" ? ` · ${formatBytes(currentTransferSpeed(upload, clock))}/s` : ""}</span>
+                  {upload.status === "uploading" ? <span className="transfer-eta">{formatRemainingTime(estimateRemainingSeconds(upload.sizeBytes, upload.uploadedBytes, currentTransferSpeed(upload, clock)))}</span> : null}
                 </span>
               </div>
               <div className="upload-row-actions">

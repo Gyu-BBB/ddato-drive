@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
 import { createSpeedMeter } from '../src/client/shared/lib/transferProgress.js';
 import { formatPercent } from '../src/client/shared/lib/formatPercent.js';
+import { currentTransferSpeed, estimateRemainingSeconds, formatRemainingTime, remainingTransfersLabel } from '../src/client/shared/lib/transferEta.js';
+
+assert.equal(estimateRemainingSeconds(1000, 200, 100), 8);
+assert.equal(estimateRemainingSeconds(1000, 1000, 0), 0);
+assert.equal(estimateRemainingSeconds(1000, 1200, 100), 0);
+for (const size of [null, undefined, NaN, Infinity, -1]) assert.equal(estimateRemainingSeconds(size, 0, 100), null);
+for (const speed of [0, -1, NaN, Infinity]) assert.equal(estimateRemainingSeconds(1000, 200, speed), null);
+for (const [seconds, expected] of [[null, '남은 시간 계산 중'], [Infinity, '남은 시간 계산 중'], [0, '마무리 중'], [0.1, '약 1초 남음'], [8, '약 8초 남음'], [61, '약 1분 1초 남음'], [3661, '약 1시간 1분 남음'], [90000, '약 1일 1시간 남음']]) {
+  assert.equal(formatRemainingTime(seconds), expected);
+}
+const activeTransfer = { status: 'uploading', sizeBytes: 1000, uploadedBytes: 200, speedBytes: 100, speedUpdatedAt: 1000 };
+assert.equal(currentTransferSpeed(activeTransfer, 2000), 100);
+assert.equal(currentTransferSpeed(activeTransfer, 3000), 0);
+assert.equal(remainingTransfersLabel([activeTransfer, { ...activeTransfer, status: 'queued', uploadedBytes: 0 }], 2000), '약 18초 남음');
+assert.equal(remainingTransfersLabel([activeTransfer, { status: 'failed', sizeBytes: null }, { status: 'paused', sizeBytes: 999999 }, { status: 'done', sizeBytes: 999999 }], 2000), '약 8초 남음');
+assert.equal(remainingTransfersLabel([activeTransfer], 3000), '남은 시간 계산 중');
+assert.equal(remainingTransfersLabel([activeTransfer, { status: 'uploading', sizeBytes: null }], 2000), '남은 시간 계산 중');
+console.log('Transfer ETA passed: individual/queued totals, stale speed, unknown sizes, finalizing and duration formatting.');
+
 for (const [value, expected] of [[0, '0.00%'], [12.3456789, '12.35%'], [12.3, '12.30%'], [99.999, '100.00%'], [100, '100.00%'], [-1, '0.00%'], [NaN, '0.00%'], [Infinity, '0.00%']]) {
   assert.equal(formatPercent(value), expected);
 }

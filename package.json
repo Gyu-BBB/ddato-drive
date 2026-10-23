@@ -12,6 +12,7 @@
     "preview": "vite preview --host 0.0.0.0 --port 4174",
     "smoke": "node --disable-warning=ExperimentalWarning scripts/smoke-test.js",
     "test:transfers": "node scripts/storage-performance-test.js && node scripts/upload-store-test.js && node scripts/transfer-progress-test.js",
+    "test:transfer-ui": "node scripts/transfer-eta-browser-test.js",
     "test:zip-preview": "node scripts/zip-preview-test.js",
     "test:archive-preview": "node scripts/archive-preview-test.js",
     "test:folder-upload": "node scripts/folder-upload-test.js",
