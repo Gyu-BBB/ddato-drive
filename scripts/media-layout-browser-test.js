@@ -30,6 +30,23 @@ function fixture(width, height) {
   }
   return PNG.sync.write(png);
 }
+
+async function pinchImage(page, locator) {
+  const rect = await locator.boundingBox();
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+  const client = await page.context().newCDPSession(page);
+  try {
+    const points = distance => [{ x: centerX - distance, y: centerY, id: 1 }, { x: centerX + distance, y: centerY, id: 2 }];
+    await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(15) });
+    for (const distance of [25, 40, 60]) await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(distance) });
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally { await client.detach(); }
+}
+
+async function zoomScale(locator) {
+  return locator.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).a);
+}
 try {
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(`${base}/api/health`)).ok) break; } catch {}
@@ -61,13 +78,13 @@ try {
     await page.setViewportSize({ width, height });
     for (const file of files) {
       await page.locator('.media-card').filter({ hasText: file.name }).click();
-      await page.locator('.media-preview-stage > img').waitFor();
+      await page.locator('.media-preview-stage img').waitFor();
       await page.waitForFunction(() => {
-        const img = document.querySelector('.media-preview-stage > img');
+        const img = document.querySelector('.media-preview-stage img');
         return img.complete && img.naturalWidth > 0;
       });
       const bounds = await page.evaluate(() => {
-        const img = document.querySelector('.media-preview-stage > img');
+        const img = document.querySelector('.media-preview-stage img');
         const stage = document.querySelector('.media-preview-stage');
         const rect = element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
         const style = getComputedStyle(img);
@@ -105,8 +122,43 @@ try {
   }
   if (beforeFix) console.log(`Original clipped images: ${clipped}`);
   else {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('.media-card').filter({ hasText: 'square.png' }).click();
+    const preview = page.locator('.media-preview-stage');
+    const transform = preview.locator('.image-zoom-content');
+    await preview.getByRole('button', { name: '확대', exact: true }).click();
+    assert(await zoomScale(transform) > 1);
+    const zoomed = await transform.boundingBox();
+    const viewport = await preview.locator('.image-zoom-viewport').boundingBox();
+    await page.mouse.move(viewport.x + viewport.width / 2, viewport.y + viewport.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(viewport.x + viewport.width / 2 + 80, viewport.y + viewport.height / 2 + 40, { steps: 8 });
+    await page.mouse.up();
+    assert(Math.abs((await transform.boundingBox()).x - zoomed.x) > 10, 'enlarged preview must pan');
+    await preview.getByRole('button', { name: '화면에 맞추기', exact: true }).click();
+    assert.equal(await zoomScale(transform), 1);
+    await page.mouse.move(viewport.x + viewport.width / 2, viewport.y + viewport.height / 2);
+    await page.mouse.wheel(0, -200);
+    await page.waitForFunction(() => new DOMMatrix(getComputedStyle(document.querySelector('.media-preview-stage .image-zoom-content')).transform).a > 1.01);
+    await preview.getByRole('button', { name: '원본 크기', exact: true }).click();
+    assert.equal(await preview.getByLabel('이미지 배율').innerText(), '100%');
+    await preview.getByRole('button', { name: '화면에 맞추기', exact: true }).click();
+    await pinchImage(page, preview.locator('.image-zoom-viewport'));
+    assert(await zoomScale(transform) > 1.5, 'two-finger preview zoom must work');
+    await preview.getByRole('button', { name: '화면에 맞추기', exact: true }).click();
+    await preview.locator('.image-zoom').focus();
+    await page.keyboard.press('+');
+    assert(await zoomScale(transform) > 1);
+    await page.keyboard.press('0');
+    assert.equal(await zoomScale(transform), 1);
+    await page.screenshot({ path: path.join(shots, 'zoom-preview.png') });
+    await page.locator('.media-card').filter({ hasText: 'wide.png' }).click();
+    assert.equal(await zoomScale(preview.locator('.image-zoom-content')), 1, 'changing file resets zoom');
+    console.log('Preview: zoom buttons, wheel, drag, pinch, keyboard, original size and reset on file change passed.');
     await page.getByRole('button', { name: '전체 화면', exact: true }).click();
     await page.locator('.media-fullscreen-shell img').waitFor();
+    await page.locator('.media-fullscreen-shell').getByRole('button', { name: '확대', exact: true }).click();
+    assert(await zoomScale(page.locator('.media-fullscreen-shell .image-zoom-content')) > 1);
     await page.keyboard.press('f');
     await page.locator('.media-fullscreen-shell').waitFor({ state: 'detached' });
     for (const [width, height] of [[1440, 900], [390, 844], [360, 640], [844, 390], [667, 375]]) {
@@ -116,12 +168,44 @@ try {
       const editor = page.getByRole('dialog', { name: '이미지 편집', exact: true });
       await editor.getByRole('button', { name: '오른쪽으로 회전', exact: true }).waitFor();
       await page.waitForFunction(() => document.querySelector('.image-editor canvas')?.width === 3200);
+      const editorCanvas = editor.locator('canvas');
+      const originalPixels = await editorCanvas.evaluate(canvas => canvas.toDataURL());
+      await editor.getByRole('button', { name: '확대', exact: true }).click();
+      assert(await zoomScale(editor.locator('.image-zoom-content')) > 1);
+      await editor.getByRole('button', { name: '축소', exact: true }).click();
+      await editor.getByRole('button', { name: '화면에 맞추기', exact: true }).click();
+      await pinchImage(page, editor.locator('.image-zoom-viewport'));
+      assert(await zoomScale(editor.locator('.image-zoom-content')) > 1.5);
+      assert.equal(await editorCanvas.evaluate(canvas => canvas.toDataURL()), originalPixels, 'pinch must not leave a pen stroke');
+      assert(await editor.getByRole('button', { name: '되돌리기', exact: true }).isDisabled(), 'zoom must not dirty the image');
+      await editor.getByRole('button', { name: '이동', exact: true }).click();
+      const editorViewport = await editor.locator('.image-zoom-viewport').boundingBox();
+      const beforePan = await editorCanvas.boundingBox();
+      await page.mouse.move(editorViewport.x + editorViewport.width / 2, editorViewport.y + editorViewport.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(editorViewport.x + editorViewport.width / 2 + 45, editorViewport.y + editorViewport.height / 2, { steps: 6 });
+      await page.mouse.up();
+      assert(Math.abs((await editorCanvas.boundingBox()).x - beforePan.x) > 5);
+      await editor.getByRole('button', { name: '펜', exact: true }).click();
+      const drawViewport = await editor.locator('.image-zoom-viewport').boundingBox();
+      const transformedCanvas = await editorCanvas.boundingBox();
+      const drawX = drawViewport.x + drawViewport.width / 2;
+      const drawY = drawViewport.y + drawViewport.height / 2;
+      const pixel = { x: Math.floor((drawX - transformedCanvas.x) / transformedCanvas.width * 3200), y: Math.floor((drawY - transformedCanvas.y) / transformedCanvas.height * 400) };
+      await page.touchscreen.tap(drawX, drawY);
+      assert.deepEqual(await editorCanvas.evaluate((canvas, point) => [...canvas.getContext('2d').getImageData(point.x, point.y, 1, 1).data].slice(0, 3), pixel), [255, 59, 48], 'pen must target the right source pixel after zoom and pan');
+      await page.screenshot({ path: path.join(shots, `editor-zoom-${width}x${height}.png`) });
+      await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
+      assert.equal(await editorCanvas.evaluate(canvas => canvas.toDataURL()), originalPixels);
+      await editor.getByRole('button', { name: '화면에 맞추기', exact: true }).click();
+      await editor.getByRole('button', { name: '펜', exact: true }).click();
       await editor.getByRole('button', { name: '오른쪽으로 회전', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('.image-editor canvas').height === 3200);
       await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('.image-editor canvas').width === 3200);
       await editor.getByRole('button', { name: '다시 실행', exact: true }).click();
       await editor.getByRole('button', { name: '자르기', exact: true }).click();
+      await editor.getByRole('button', { name: '확대', exact: true }).click();
       await editor.getByRole('button', { name: '자르기 적용', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('.image-editor canvas').width === 320 && document.querySelector('.image-editor canvas').height === 2560);
       const canvas = editor.locator('canvas');

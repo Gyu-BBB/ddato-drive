@@ -1,5 +1,6 @@
 import { Download, Expand, Film, Image as ImageIcon, Loader2, LockKeyhole, MoreHorizontal, Pencil, RefreshCcw, Search, UnlockKeyhole, Video } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from 'react-dom';
 import { Button } from "../../shared/components/Button.jsx";
 import { EmptyState } from "../../shared/components/EmptyState.jsx";
 import { PasswordDialog } from '../../shared/components/PasswordDialog.jsx';
@@ -15,6 +16,7 @@ import { MoveDialog } from './components/MoveDialog.jsx';
 import { useMediaFileActions } from './useMediaFileActions.js';
 import { useAuth } from '../auth/AuthProvider.jsx';
 import { ImageEditor } from './components/ImageEditor.jsx';
+import { ZoomableImage } from './components/ImageZoom.jsx';
 
 const kindOptions = [
   { id: "", label: "전체", icon: Film },
@@ -65,6 +67,7 @@ export function MediaViewerPage({ onOpenLocation }) {
       if (unlockFile) return;
       if (actions.hasOverlay) return;
       if (!selectedFile) return;
+      if (event.target.closest?.('.image-zoom-toolbar')) return;
       if (event.key === "ArrowRight" || event.key === "ArrowDown") {
         event.preventDefault();
         selectOffset(1);
@@ -210,7 +213,7 @@ export function MediaViewerPage({ onOpenLocation }) {
                     <span>미리보기·재생·다운로드하려면 암호를 입력하세요.</span>
                     <Button icon={UnlockKeyhole} onClick={() => requestUnlock(selectedFile)}>암호 입력</Button>
                   </div>
-                ) : <MediaPreview file={selectedFile} />}
+                ) : <MediaPreview key={selectedFile.id} file={selectedFile} />}
               </div>
               <div className="media-details">
                 <div>
@@ -293,7 +296,7 @@ function isLocked(file) {
 
 function MediaPreview({ file }) {
   const src = filesApi.previewUrl(file.id);
-  if (isImageFile(file)) return <img src={src} alt={file.name} />;
+  if (isImageFile(file)) return <ZoomableImage src={src} alt={file.name} />;
   return <video src={src} controls preload="metadata" playsInline />;
 }
 
@@ -385,13 +388,13 @@ function MediaFullscreen({ file, onClose }) {
     if (nextVolume > 0) video.muted = false;
   }
 
-  return (
+  return createPortal(
     <div ref={shellRef} className="media-fullscreen-shell" tabIndex={-1} aria-label="전체 화면 미디어 보기">
       {isImageFile(file) ? (
-        <img src={src} alt={file.name} />
+        <ZoomableImage key={file.id} src={src} alt={file.name} onClose={close} />
       ) : (
         <video ref={videoRef} src={src} autoPlay playsInline onClick={toggleVideo} />
       )}
-    </div>
+    </div>, document.body
   );
 }

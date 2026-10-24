@@ -1,4 +1,4 @@
-import { Check, Crop, Eraser, Info, Loader2, Pencil, Redo2, RotateCcw, RotateCw, Save, Undo2, X } from 'lucide-react';
+import { Check, Crop, Eraser, Hand, Info, Loader2, Pencil, Redo2, RotateCcw, RotateCw, Save, Undo2, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactCrop from 'react-image-crop';
@@ -9,6 +9,7 @@ import { filesApi } from '../filesApi.js';
 import { canvasPng, editedImageName, MAX_EDIT_PIXELS, paintStroke, renderImageEdits } from '../imageEditing.js';
 import { removeImageBackground } from '../backgroundRemoval/backgroundRemoval.js';
 import { BACKGROUND_ASSET_PATH, MODEL_INPUT_SIZE } from '../backgroundRemoval/config.js';
+import { ImageZoom, ZOOM_TOOLBAR_HEIGHT } from './ImageZoom.jsx';
 
 const initialCrop = () => ({ unit: '%', x: 10, y: 10, width: 80, height: 80 });
 const colors = ['#ff3b30', '#ffcc00', '#34c759', '#007aff', '#ffffff', '#000000'];
@@ -69,7 +70,7 @@ export function ImageEditor({ file, onClose, onSaved }) {
 
   useLayoutEffect(() => {
     const observer = new ResizeObserver(([entry]) => {
-      setViewport({ width: Math.max(1, entry.contentRect.width - 32), height: Math.max(1, entry.contentRect.height - 32) });
+      setViewport({ width: Math.max(1, entry.contentRect.width - 32), height: Math.max(1, entry.contentRect.height - 32 - ZOOM_TOOLBAR_HEIGHT) });
     });
     observer.observe(stageRef.current);
     return () => observer.disconnect();
@@ -145,6 +146,12 @@ export function ImageEditor({ file, onClose, onSaved }) {
     else commit(stroke);
   }
 
+  function cancelStroke() {
+    if (!strokeRef.current) return;
+    strokeRef.current = null;
+    renderImageEdits(canvasRef.current, source, history.past);
+  }
+
   function applyCrop() {
     if (!crop?.width || !crop?.height) return;
     commit({ type: 'crop', x: dimensions.width * crop.x / 100, y: dimensions.height * crop.y / 100,
@@ -217,6 +224,7 @@ export function ImageEditor({ file, onClose, onSaved }) {
       <div className="image-editor-tools" role="toolbar" aria-label="이미지 편집 도구">
         <Button icon={Crop} iconOnly aria-pressed={tool === 'crop'} disabled={disabled} onClick={() => setTool('crop')}>자르기</Button>
         <Button icon={Pencil} iconOnly aria-pressed={tool === 'pen'} disabled={disabled} onClick={() => setTool('pen')}>펜</Button>
+        <Button icon={Hand} iconOnly aria-pressed={tool === 'pan'} disabled={disabled} onClick={() => setTool('pan')}>이동</Button>
         <Button icon={Eraser} iconOnly disabled={disabled} onClick={removeBackground}>배경 제거</Button>
         <Button icon={RotateCcw} iconOnly disabled={disabled} onClick={() => commit({ type: 'rotate', direction: -1 })}>왼쪽으로 회전</Button>
         <Button icon={RotateCw} iconOnly disabled={disabled} onClick={() => commit({ type: 'rotate', direction: 1 })}>오른쪽으로 회전</Button>
@@ -229,7 +237,7 @@ export function ImageEditor({ file, onClose, onSaved }) {
             {colors.map(value => <button key={value} type="button" title={value} aria-label={`펜 색상 ${value}`} aria-pressed={color === value} disabled={disabled} style={{ backgroundColor: value }} onClick={() => setColor(value)} />)}
           </div>
           <label className="image-editor-width">굵기 <input aria-label="펜 굵기" type="range" min="1" max="24" value={penWidth} disabled={disabled} onChange={event => setPenWidth(Number(event.target.value))} /><output>{penWidth}</output></label>
-        </> : <Button icon={Check} disabled={disabled || !crop?.width || !crop?.height} onClick={applyCrop}>자르기 적용</Button>}
+        </> : tool === 'crop' ? <Button icon={Check} disabled={disabled || !crop?.width || !crop?.height} onClick={applyCrop}>자르기 적용</Button> : null}
         <span className="image-editor-dimensions">{source ? `${dimensions.width} × ${dimensions.height}` : ''}</span>
       </div>
       {error ? <div className="error-banner" role="alert">{error}</div> : null}
@@ -240,9 +248,11 @@ export function ImageEditor({ file, onClose, onSaved }) {
       </div> : null}
       <div ref={stageRef} className={`image-editor-stage ${tool === 'pen' ? 'pen-mode' : ''}`}>
         {!source && !error ? <Loader2 className="upload-spinner" aria-label="이미지 불러오는 중" /> : null}
+        <ImageZoom baseScale={scale} resetKey={`${dimensions.width}:${dimensions.height}`} disabled={disabled} pan={tool === 'pan'} onGestureStart={cancelStroke}>
         <ReactCrop crop={tool === 'crop' ? crop : undefined} onChange={(_, percent) => setCrop(percent)} disabled={tool !== 'crop' || disabled} minWidth={8} minHeight={8} keepSelection style={{ display: source ? 'inline-block' : 'none' }}>
           <canvas ref={canvasRef} aria-label="편집 이미지" style={{ width: displayWidth, height: displayHeight }} onPointerDown={startStroke} onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke} />
         </ReactCrop>
+        </ImageZoom>
       </div>
       <footer className="image-editor-footer">
         <label>파일 이름<input aria-label="편집 파일 이름" value={name} disabled={saving} onChange={event => setName(event.target.value)} /></label>
