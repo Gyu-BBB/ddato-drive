@@ -2,6 +2,9 @@ import { config } from "../../core/config.js";
 import { getDb } from "../../database/database.js";
 
 export class FileRepository {
+  findByName(ownerId, parentId, name) {
+    return getDb().prepare("SELECT * FROM files WHERE owner_id = ? AND parent_id IS ? AND lower(original_name) = lower(?) AND deleted_at IS NULL LIMIT 1").get(ownerId, parentId || null, name);
+  }
   findById(id) {
     return getDb().prepare("SELECT * FROM files WHERE id = ?").get(id);
   }

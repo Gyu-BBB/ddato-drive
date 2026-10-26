@@ -28,6 +28,8 @@ import {
 import { Button } from "../../../shared/components/Button.jsx";
 import { Breadcrumbs } from "./Breadcrumbs.jsx";
 
+import { UploadPolicyControl } from './UploadPolicyControl.jsx';
+
 const viewModes = [
   { id: "icon", label: "아이콘 보기", icon: LayoutGrid },
   { id: "list", label: "목록 보기", icon: ListIcon },
@@ -68,6 +70,8 @@ export function DriveChrome({
   onSelectAll,
   onClearSelection,
   onCreateFolder,
+  conflictPolicy,
+  onConflictPolicyChange,
   onDownload,
   onShare,
   onDuplicate,
@@ -112,6 +116,7 @@ export function DriveChrome({
               <Button icon={Upload} iconOnly onClick={() => inputRef.current?.click()}>업로드</Button>
               <Button icon={FolderUp} iconOnly onClick={() => folderInputRef.current?.click()}>폴더 업로드</Button>
               <Button icon={FolderPlus} iconOnly onClick={onCreateFolder}>새 폴더</Button>
+              <UploadPolicyControl value={conflictPolicy} onChange={onConflictPolicyChange} />
             </div>
           ) : null}
         </div>

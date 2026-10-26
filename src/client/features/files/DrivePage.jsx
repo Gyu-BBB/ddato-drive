@@ -88,6 +88,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
     const saved = window.localStorage.getItem(VIEW_STORAGE_KEY);
     return viewModeIds.includes(saved) ? saved : "icon";
   });
+  const [conflictPolicy, setConflictPolicy] = useState('keep');
   const uploadQueue = usePersistentUploadQueue({
     accountId: user?.id || "",
     enabled: !trashMode,
@@ -331,7 +332,7 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
 
   async function uploadEntries(entries) {
     await uploadCollectedEntries({ entries, rootParentId: parentId, ownerId,
-      createFolder: filesApi.createFolder, uploadFile: uploadQueue.enqueueUpload,
+      createFolder: filesApi.createFolder, uploadFile: payload => uploadQueue.enqueueUpload({ ...payload, conflictPolicy }),
       onQueueAdd: uploadQueue.addTransientUpload, onQueueUpdate: uploadQueue.updateTransientUpload });
     await loadFiles();
   }
@@ -976,6 +977,8 @@ export function DrivePage({ ownerId = "", ownerLabel = "", trashMode = false, ho
           onSelectAll={toggleSelectAllVisible}
           onClearSelection={() => setSelectedIds([])}
           onCreateFolder={createFolder}
+          conflictPolicy={conflictPolicy}
+          onConflictPolicyChange={setConflictPolicy}
           onDownload={downloadSelected}
           onShare={() => openShareDialog(selectedFiles)}
           onDuplicate={() => duplicateSelected(selectedFiles)}

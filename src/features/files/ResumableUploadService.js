@@ -11,6 +11,7 @@ import { recordProjectTempGrowth } from "../../core/storageUsage.js";
 import { UploadTransferLimiter } from "./UploadTransferLimiter.js";
 import { uploadCompletionRepository } from './UploadCompletionRepository.js';
 import { uploadCancellationRepository } from './UploadCancellationRepository.js';
+import { resolveUploadConflict } from './UploadConflictPolicy.js';
 
 const SESSION_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 
@@ -45,7 +46,7 @@ export class ResumableUploadService {
       const existing = completed?.metadata || uploadSessionStore.listSessions({ cleanup: true })
         .find(entry => entry.metadata.requestUserId === requestUser.id && entry.metadata.clientUploadId === clientUploadId)?.metadata;
       if (existing) {
-        if (existing.ownerId !== owner.id || existing.parentId !== parentId || existing.sizeBytes !== sizeBytes || existing.originalName !== (String(payload.name || 'upload').trim() || 'upload')) {
+        if (existing.ownerId !== owner.id || existing.parentId !== parentId || existing.sizeBytes !== sizeBytes || (existing.conflictPolicy || 'keep') !== (payload.conflictPolicy || 'keep') || existing.originalName !== (String(payload.name || 'upload').trim() || 'upload')) {
           fail(409, 'The upload id belongs to another file.');
         }
         return completed ? this.completedStatus(requestUser, completed) : this.serializeStatus(existing);
@@ -53,11 +54,14 @@ export class ResumableUploadService {
     }
     uploadCompletionRepository.cleanup();
     uploadCancellationRepository.cleanup();
+    const conflict = resolveUploadConflict(req, { ownerId: owner.id, parentId, name: payload.name, conflictPolicy: payload.conflictPolicy });
+    if (conflict.skipped) return { skipped: true, originalName: payload.name };
     fileService.assertUserQuota(owner, sizeBytes);
     fileService.assertProjectQuota(sizeBytes + uploadSessionStore.getPendingRemainingBytes());
 
     const now = Date.now();
     const metadata = {
+      ...conflict,
       id: crypto.randomUUID(),
       clientUploadId,
       requestUserId: requestUser.id,
@@ -181,7 +185,10 @@ export class ResumableUploadService {
       mimeType: metadata.mimeType,
       sizeBytes: metadata.sizeBytes,
       uploadSessionId: metadata.id,
-      uploadSessionMetadata: metadata
+      uploadSessionMetadata: metadata,
+      conflictPolicy: metadata.conflictPolicy,
+      replaceTargetId: metadata.replaceTargetId,
+      replaceTargetVersion: metadata.replaceTargetVersion
     });
 
     fs.rmSync(this.sessionDir(metadata), { recursive: true, force: true });

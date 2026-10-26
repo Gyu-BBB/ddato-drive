@@ -1,0 +1,7 @@
+.upload-policy { position: relative; flex: 0 0 auto; }
+.upload-policy summary { display: grid; place-items: center; width: 32px; height: 32px; cursor: pointer; border-radius: 6px; list-style: none; }
+.upload-policy summary::-webkit-details-marker { display: none; }
+.upload-policy summary:hover { background: var(--dd-hover, #eceef0); }
+.upload-policy fieldset { position: absolute; top: 38px; left: 0; z-index: 80; width: min(272px, calc(100vw - 90px)); margin: 0; padding: 12px; background: var(--dd-surface, white); color: var(--dd-text, #202124); border: 1px solid #d5d8dc; border-radius: 8px; box-shadow: 0 8px 24px #0002; }
+.upload-policy legend { font-size: 12px; font-weight: 600; background: var(--dd-surface, white); }
+.upload-policy label { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 13px; white-space: normal; }

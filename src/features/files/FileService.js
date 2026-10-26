@@ -134,7 +134,22 @@ export class FileService {
 
     const fileId = crypto.randomUUID();
     const safeName = fileNamePolicy.sanitizeUploadName(upload.originalName, "upload");
-    const uniqueName = fileNamePolicy.nextAvailable(fileRepository, owner.id, parentId, safeName);
+    const collision = fileRepository.findByName(owner.id, parentId, safeName);
+    let replacement = null;
+    if (upload.conflictPolicy === 'replace') {
+      if (upload.replaceTargetId) {
+        replacement = this.getAccessibleFile(req.user, upload.replaceTargetId);
+        if (replacement.id !== collision?.id || replacement.type !== 'file' || replacement.updated_at !== upload.replaceTargetVersion) {
+          fail(409, '교체할 파일이 변경되었습니다. 다시 선택해 주세요.');
+        }
+        accessPasswordService.assertFileAccess(req, replacement);
+      } else if (collision) fail(409, '업로드 중 같은 이름의 파일이 추가되었습니다. 교체 여부를 다시 확인해 주세요.');
+    }
+    if (upload.conflictPolicy === 'skip' && collision) {
+      if (upload.uploadSessionMetadata) withTransaction(() => uploadCompletionRepository.record(upload.uploadSessionMetadata, collision.id));
+      return { ...this.serializeFileForRequest(req, collision), uploadSkipped: true };
+    }
+    const uniqueName = replacement ? safeName : fileNamePolicy.nextAvailable(fileRepository, owner.id, parentId, safeName);
     const stored = fileStorage.moveUploadedFile({
       tempPath: upload.tempPath,
       ownerId: owner.id,
@@ -145,6 +160,10 @@ export class FileService {
     let record;
     try {
       record = withTransaction(() => {
+        if (replacement) {
+          fileRepository.markDeleted([replacement]);
+          shareService.revokeSharesForFiles([replacement, ...fileRepository.loadActiveAncestors(replacement.id, replacement.owner_id)]);
+        }
         const created = fileRepository.insertFile({
           id: fileId,
           ownerId: owner.id,
@@ -154,6 +173,8 @@ export class FileService {
           mimeType: mimeTypePolicy.normalize(upload.mimeType, uniqueName),
           sizeBytes: upload.sizeBytes,
           storagePath: stored.storagePath
+          , accessPasswordHash: replacement?.access_password_hash || null,
+          accessPasswordSetAt: replacement?.access_password_set_at || null
         });
         if (upload.uploadSessionMetadata) uploadCompletionRepository.record(upload.uploadSessionMetadata, created.id);
         return created;

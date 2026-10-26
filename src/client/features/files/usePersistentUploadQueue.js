@@ -81,10 +81,11 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
     };
   }, [accountId, enabled]);
 
-  async function enqueueUpload({ file, parentId = null, ownerId = "", name = "", displayName = "" }) {
+  async function enqueueUpload({ file, parentId = null, ownerId = "", name = "", displayName = "", conflictPolicy = 'keep' }) {
     if (!file || !accountId) return null;
     const item = {
       id: createUploadId(),
+      conflictPolicy,
       accountId,
       file,
       fileName: file.name,
@@ -217,6 +218,11 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       throwIfAborted(controller.signal);
       // Reserve server capacity before cloning the original file into IndexedDB.
       const session = await retryTransfer(() => prepareSession(item, controller.signal), retryOptions);
+      if (session.skipped) {
+        updateVisibleOnly(item.id, { status: 'done', uploadedBytes: 0, progress: 100, detail: '같은 이름 · 건너뜀', file: null });
+        await removeStoredUpload(item.id).catch(() => {});
+        return;
+      }
       item = { ...item, serverSessionId: session.id };
       if (controller.signal.aborted) throw new DOMException('Upload interrupted', 'AbortError');
       if (!item.persistenceMode) {
@@ -315,6 +321,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       if (!persisted && !canceledIdsRef.current.has(item.id)) return;
       await handleUploadError(initialItem.id, error, item);
     } finally {
+      if (controllersRef.current.get(initialItem.id) === controller) controllersRef.current.delete(initialItem.id);
       releaseSlot?.();
     }
   }
@@ -335,7 +342,8 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       name: item.name,
       sizeBytes: item.sizeBytes,
       mimeType: item.mimeType,
-      clientUploadId: item.id
+      clientUploadId: item.id,
+      conflictPolicy: item.conflictPolicy || 'keep'
     }, { signal });
     return result.session;
   }
