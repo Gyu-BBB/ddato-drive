@@ -9,6 +9,8 @@ export function serializeFile(file, extra = {}) {
     name: file.original_name,
     mimeType: file.mime_type,
     sizeBytes: file.size_bytes,
+    sourceModifiedAt: file.source_modified_at || null,
+    capturedAt: file.captured_at || null,
     folderColor: file.type === "folder" ? (file.folder_color || "yellow") : null,
     passwordProtected: Boolean(file.access_password_hash),
     ownPasswordProtected: Boolean(file.access_password_hash),

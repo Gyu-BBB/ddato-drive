@@ -6,6 +6,7 @@ node_modules/
 data/
 dist/
 public/ai/background-removal/
+public/assets/photo-processing/
 coverage/
 *.sqlite
 *.sqlite3

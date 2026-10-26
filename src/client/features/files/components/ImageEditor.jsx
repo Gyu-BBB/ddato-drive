@@ -6,6 +6,7 @@ import 'react-image-crop/dist/ReactCrop.css';
 import './imageEditor.css';
 import { Button } from '../../../shared/components/Button.jsx';
 import { filesApi } from '../filesApi.js';
+import { convertHeicPreview } from '../heicPreview.js';
 import { canvasPng, editedImageName, MAX_EDIT_PIXELS, paintStroke, renderImageEdits } from '../imageEditing.js';
 import { removeImageBackground } from '../backgroundRemoval/backgroundRemoval.js';
 import { BACKGROUND_ASSET_PATH, MODEL_INPUT_SIZE } from '../backgroundRemoval/config.js';
@@ -63,7 +64,10 @@ export function ImageEditor({ file, onClose, onSaved }) {
     let bitmap;
     (async () => {
       try {
-        const blob = await filesApi.previewBlob(file.id);
+        let blob = await filesApi.previewBlob(file.id);
+        if (/\.(heic|heif)$/i.test(file.name)) {
+          blob = await convertHeicPreview(blob);
+        }
         bitmap = await createImageBitmap(blob);
         if (!active) { bitmap.close(); return; }
         if (bitmap.width * bitmap.height > MAX_EDIT_PIXELS) {

@@ -36,3 +36,11 @@ for (const [name, url] of [
 }
 await fs.copyFile(path.join(root, 'docs', 'background-removal-notices.txt'), path.join(target, 'NOTICE.txt'));
 console.log('Background-removal model, runtime and licenses are ready (same-origin, browser-only inference).');
+
+const photoAssets = path.join(root, 'public/assets/photo-processing');
+await fs.mkdir(photoAssets, { recursive: true });
+for (const [dependency, name] of [['heic-to', 'HEIC-TO-LICENSE.txt'], ['exifr', 'EXIFR-LICENSE.txt']]) {
+  await fs.copyFile(path.join(root, 'node_modules', dependency, 'LICENSE'), path.join(photoAssets, name));
+}
+await fs.copyFile(path.join(root, 'node_modules/heic-to/dist/csp/heic-to.js'), path.join(photoAssets, 'heic-to-1.6.6.js'));
+await fs.copyFile(path.join(root, 'docs/photo-processing-notices.txt'), path.join(photoAssets, 'NOTICE.txt'));

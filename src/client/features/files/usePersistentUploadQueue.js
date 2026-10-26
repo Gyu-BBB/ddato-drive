@@ -343,7 +343,8 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       sizeBytes: item.sizeBytes,
       mimeType: item.mimeType,
       clientUploadId: item.id,
-      conflictPolicy: item.conflictPolicy || 'keep'
+      conflictPolicy: item.conflictPolicy || 'keep',
+      sourceModifiedAt: item.lastModified
     }, { signal });
     return result.session;
   }

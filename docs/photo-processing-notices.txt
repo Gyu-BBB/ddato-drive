@@ -1,0 +1,14 @@
+Photo processing dependencies
+
+heic-to 1.6.6 (unmodified), LGPL-3.0
+Source and build instructions: https://github.com/hoppergee/heic-to
+Includes libheif 1.23.6 and libde265; see upstream source for their licensing.
+The browser decoder is loaded as a separate lazy module. It is not used to
+replace stored original photos. Rebuild/relink using npm install and npm run build.
+
+exifr 7.1.3 (unmodified), MIT
+Source: https://github.com/MikeKovarik/exifr
+
+License texts and the unmodified HEIC browser module are distributed beside
+this notice under /assets/photo-processing/. npm package sources are available
+from the linked upstream repositories and the npm registry at these versions.

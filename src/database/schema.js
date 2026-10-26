@@ -202,6 +202,10 @@ function ensureUserLoginStateColumns(db) {
 
 function ensureFileMetadataColumns(db) {
   const columns = db.prepare("PRAGMA table_info(files)").all().map((column) => column.name);
+  for (const [name, type] of [['source_modified_at', 'INTEGER'], ['captured_at', 'INTEGER'], ['content_sha256', 'TEXT']]) {
+    if (!columns.includes(name)) db.exec(`ALTER TABLE files ADD COLUMN ${name} ${type}`);
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS files_photo_hash_idx ON files(owner_id, content_sha256) WHERE content_sha256 IS NOT NULL AND deleted_at IS NULL");
   if (!columns.includes("folder_color")) {
     db.exec("ALTER TABLE files ADD COLUMN folder_color TEXT");
   }

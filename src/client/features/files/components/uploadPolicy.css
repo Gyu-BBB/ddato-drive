@@ -1,4 +1,6 @@
 .upload-policy { position: relative; flex: 0 0 auto; }
+.capture-upload { display: none; }
+@media(pointer: coarse) { .capture-upload { display: inline-flex; } }
 .upload-policy summary { display: grid; place-items: center; width: 32px; height: 32px; cursor: pointer; border-radius: 6px; list-style: none; }
 .upload-policy summary::-webkit-details-marker { display: none; }
 .upload-policy summary:hover { background: var(--dd-hover, #eceef0); }

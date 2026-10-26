@@ -12,6 +12,7 @@ import { UploadTransferLimiter } from "./UploadTransferLimiter.js";
 import { uploadCompletionRepository } from './UploadCompletionRepository.js';
 import { uploadCancellationRepository } from './UploadCancellationRepository.js';
 import { resolveUploadConflict } from './UploadConflictPolicy.js';
+import { photoMetadataService, normalizeSourceDate } from './PhotoMetadataService.js';
 
 const SESSION_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 
@@ -62,6 +63,7 @@ export class ResumableUploadService {
     const now = Date.now();
     const metadata = {
       ...conflict,
+      sourceModifiedAt: normalizeSourceDate(payload.sourceModifiedAt),
       id: crypto.randomUUID(),
       clientUploadId,
       requestUserId: requestUser.id,
@@ -158,7 +160,7 @@ export class ResumableUploadService {
     return this.withSessionLock(sessionId, id => this.finishSession(req, id));
   }
 
-  finishSession(req, sessionId) {
+  async finishSession(req, sessionId) {
     const requestUser = req.user;
     const completed = uploadCompletionRepository.find(requestUser.id, sessionId);
     if (completed) {
@@ -177,7 +179,9 @@ export class ResumableUploadService {
       fail(409, "Upload is not complete.", this.serializeStatus(metadata));
     }
 
+    const photoMetadata = await photoMetadataService.inspect(partialPath, { name: metadata.originalName, mimeType: metadata.mimeType, sizeBytes: metadata.sizeBytes });
     const record = fileService.createFileFromUpload(req, {
+      photoMetadata: { ...photoMetadata, sourceModifiedAt: metadata.sourceModifiedAt },
       ownerId: metadata.ownerId,
       parentId: metadata.parentId,
       tempPath: partialPath,

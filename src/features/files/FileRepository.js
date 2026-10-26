@@ -2,6 +2,14 @@ import { config } from "../../core/config.js";
 import { getDb } from "../../database/database.js";
 
 export class FileRepository {
+  setSourceMetadata(id, { sourceModifiedAt = null, capturedAt = null, contentSha256 = null } = {}) {
+    getDb().prepare('UPDATE files SET source_modified_at = ?, captured_at = ?, content_sha256 = ? WHERE id = ?').run(sourceModifiedAt, capturedAt, contentSha256, id);
+    return this.findById(id);
+  }
+
+  photoCounts(ownerId) {
+    return new Map(getDb().prepare("SELECT content_sha256 AS hash, COUNT(*) AS count FROM files WHERE owner_id = ? AND content_sha256 IS NOT NULL AND deleted_at IS NULL GROUP BY content_sha256").all(ownerId).map(row => [row.hash, row.count]));
+  }
   findByName(ownerId, parentId, name) {
     return getDb().prepare("SELECT * FROM files WHERE owner_id = ? AND parent_id IS ? AND lower(original_name) = lower(?) AND deleted_at IS NULL LIMIT 1").get(ownerId, parentId || null, name);
   }

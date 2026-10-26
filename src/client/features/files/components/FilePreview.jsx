@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { FolderGlyph } from "./FolderGlyph.jsx";
 import { ArchivePreview } from './ArchivePreview.jsx';
 import { isArchiveName } from '../../../../shared/archiveFormats.js';
+import { convertHeicPreview, isHeicName, MAX_HEIC_PREVIEW_BYTES } from '../heicPreview.js';
 
 const TEXT_EXTENSIONS = new Set([
   ".txt", ".text", ".md", ".markdown", ".mdown",
@@ -51,6 +52,10 @@ export function useFilePreview(file, loadBlob, getPreviewUrl = null, loadPreview
     if (!file || file.type !== "file" || !canInlinePreview(file)) return undefined;
     if (file.passwordProtected && !file.passwordUnlocked) {
       setState({ loading: false, url: "", text: "", spreadsheet: null, error: "암호가 필요합니다.", message: "", requiresPassword: true });
+      return undefined;
+    }
+    if (isHeicName(file.name) && file.sizeBytes > MAX_HEIC_PREVIEW_BYTES) {
+      setState({ loading: false, url: '', error: 'HEIC 미리보기는 32MB 이하에서 지원합니다. 원본을 다운로드해 주세요.' });
       return undefined;
     }
 
@@ -104,7 +109,7 @@ export function useFilePreview(file, loadBlob, getPreviewUrl = null, loadPreview
       };
     }
 
-    if (!isArchiveFile(file) && !isTextFile(file) && !isSpreadsheetFile(file) && getPreviewUrl) {
+    if (!isArchiveFile(file) && !isTextFile(file) && !isSpreadsheetFile(file) && !isHeicName(file.name) && getPreviewUrl) {
       setState({ loading: false, url: getPreviewUrl(file), text: "", spreadsheet: null, error: "", message: "", requiresPassword: false });
       return () => {
         active = false;
@@ -115,6 +120,10 @@ export function useFilePreview(file, loadBlob, getPreviewUrl = null, loadPreview
     loadBlob(file)
       .then(async (blob) => {
         if (!active) return;
+        if (isHeicName(file.name)) {
+          blob = await convertHeicPreview(blob);
+          if (!active) return;
+        }
         if (isArchiveFile(file)) {
           const archive = JSON.parse(await blob.text());
           if (active) setState({ loading: false, url: '', text: '', archive, error: '', requiresPassword: false });

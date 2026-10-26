@@ -2,6 +2,7 @@ import {
   ArrowDownAZ,
   ArrowLeft,
   ArrowUpDown,
+  Camera,
   Columns3,
   Copy,
   Download,
@@ -25,6 +26,7 @@ import {
   Upload,
   X
 } from "lucide-react";
+import { useRef } from 'react';
 import { Button } from "../../../shared/components/Button.jsx";
 import { Breadcrumbs } from "./Breadcrumbs.jsx";
 
@@ -38,6 +40,8 @@ const viewModes = [
 ];
 
 const sortOptions = [
+  { id: "capturedAt", label: "촬영일" },
+  { id: "sourceModifiedAt", label: "원본 수정일" },
   { id: "name", label: "이름" },
   { id: "size", label: "용량" },
   { id: "extension", label: "확장자" },
@@ -98,11 +102,13 @@ export function DriveChrome({
   onDragLeaveFolder,
   onDropOnFolder
 }) {
+  const cameraInputRef = useRef(null);
   const SelectIcon = allVisibleSelected ? Square : SquareCheckBig;
 
   return (
     <header className={selectedCount ? "drive-chrome has-selection" : "drive-chrome"}>
       <input ref={inputRef} type="file" multiple hidden onChange={onUpload} />
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden onChange={onUpload} />
       <input ref={folderInputRef} type="file" webkitdirectory="" directory="" multiple hidden onChange={onUpload} />
 
       <div className="drive-titlebar">
@@ -114,6 +120,7 @@ export function DriveChrome({
           {!trashMode ? (
             <div className="chrome-control-group create-controls">
               <Button icon={Upload} iconOnly onClick={() => inputRef.current?.click()}>업로드</Button>
+              <Button icon={Camera} iconOnly className="capture-upload" onClick={() => cameraInputRef.current?.click()}>사진 촬영</Button>
               <Button icon={FolderUp} iconOnly onClick={() => folderInputRef.current?.click()}>폴더 업로드</Button>
               <Button icon={FolderPlus} iconOnly onClick={onCreateFolder}>새 폴더</Button>
               <UploadPolicyControl value={conflictPolicy} onChange={onConflictPolicyChange} />

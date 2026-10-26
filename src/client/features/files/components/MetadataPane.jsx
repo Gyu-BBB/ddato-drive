@@ -39,6 +39,9 @@ export function MetadataDetails({ file, onOpenFolder, openFolderDisabled = false
         <MetadataRow label="크기" value={file.type === "folder" ? "-" : formatBytes(file.sizeBytes)} />
         <MetadataRow label="수정일" value={formatDate(file.updatedAt)} />
         <MetadataRow label="생성일" value={formatDate(file.createdAt)} />
+        {file.capturedAt ? <MetadataRow label="촬영일" value={formatDate(file.capturedAt)} /> : null}
+        {file.sourceModifiedAt ? <MetadataRow label="원본 수정일" value={formatDate(file.sourceModifiedAt)} /> : null}
+        {file.duplicatePhotoCount > 0 ? <MetadataRow label="동일한 사진" value={`${file.duplicatePhotoCount}개 더 있음`} /> : null}
         {file.deletedAt != null ? <>
           <MetadataRow label="삭제일" value={formatDate(file.deletedAt)} />
           <MetadataRow label="자동 영구 삭제일" value={formatDate(file.trashExpiresAt)} />

@@ -38,6 +38,8 @@ function sortValue(file, field) {
   if (field === "extension") return fileExtension(file);
   if (field === "createdAt") return Number(file.createdAt || 0);
   if (field === "updatedAt") return Number(file.updatedAt || 0);
+  if (field === 'capturedAt') return Number(file.capturedAt || file.sourceModifiedAt || file.createdAt || 0);
+  if (field === 'sourceModifiedAt') return Number(file.sourceModifiedAt || file.updatedAt || 0);
   if (field === "kind") return fileKind(file);
   if (field === "location") return fileLocation(file);
   return String(file.name || "");

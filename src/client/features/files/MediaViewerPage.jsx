@@ -236,6 +236,9 @@ export function MediaViewerPage({ onOpenLocation }) {
                     <dt>수정일</dt>
                     <dd>{formatDate(selectedFile.updatedAt)}</dd>
                   </div>
+                  {selectedFile.capturedAt ? <div><dt>촬영일</dt><dd>{formatDate(selectedFile.capturedAt)}</dd></div> : null}
+                  {selectedFile.sourceModifiedAt ? <div><dt>원본 수정일</dt><dd>{formatDate(selectedFile.sourceModifiedAt)}</dd></div> : null}
+                  {selectedFile.duplicatePhotoCount > 0 ? <div><dt>동일한 사진</dt><dd>{selectedFile.duplicatePhotoCount}개 더 있음</dd></div> : null}
                   <div>
                     <dt>종류</dt>
                     <dd>{selectedFile.mimeType || selectedFile.mediaKind}</dd>

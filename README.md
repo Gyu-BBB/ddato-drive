@@ -267,6 +267,8 @@ This is a self-hosted application. Before exposing it publicly:
 - New uploads reserve available account/project capacity before persisting the file in browser storage or transferring its contents. Rejected files are not copied into IndexedDB; browser storage failures release server reservations. Admitted files waiting for a transfer slot retain reload recovery.
 - Files above 128 MiB (or exceeding half the estimated free browser storage) persist only upload metadata, avoiding a second full local copy. After reload, reselect the original file using its resume button. Name, size, modification time and sampled first/last MiB fingerprints are checked; the fingerprint is not a full-file integrity hash. Small files retain automatic IndexedDB recovery. Browser shutdown still stops web uploads.
 - Upload settings offer keep-both (default), skip and replace for duplicate names. Replacements preserve the old file in trash and retain its password protection; affected shares are revoked. Locked or concurrently modified targets cannot be silently overwritten. Both versions count toward quota until trash is purged.
+- Mobile file upload includes a camera input. New resumable uploads preserve the source modification date, and photos up to 64 MiB are inspected with at most two concurrent jobs for EXIF capture dates and streamed SHA-256 duplicate detection within the same account (excluding trash). This is exact-byte duplication, not visual similarity; originals are never automatically removed. Existing photos are not retroactively hashed.
+- HEIC/HEIF previews and thumbnails are decoded in the browser using the lazy-loaded, CSP-safe heic-to module, with sequential decoding, two fetch slots, a 32 MiB preview cap and an available-metadata 40-megapixel guard. Original downloads remain unchanged. [Photo processing notices](docs/photo-processing-notices.txt) are also served at `/assets/photo-processing/NOTICE.txt`.
 - Resumable uploads use stable client operation IDs, transactional completion receipts and cancellation tombstones retained for 30 days. Lost responses and reloads do not create duplicate files. Partial chunk writes resume from their actual on-disk offset; conflicting retransmissions are rejected.
 - Transient upload connection/server failures retry up to three times with abortable backoff and confirmed-offset resynchronization; retry chunks shrink on unstable connections. Quota/authentication failures do not retry. Control requests and binary uploads have bounded timeouts.
 - Single and shared folder ZIP downloads validate descendant file protection. Setting or changing file/folder protection revokes existing share links for the affected tree and ancestors.
@@ -289,6 +291,7 @@ npm run build
 npm run smoke
 npm run test:transfers
 npm run test:transfer-reliability
+npm run test:drive-improvements
 npm run test:transfer-ui
 node scripts/upload-concurrency-test.js
 npm run test:folder-upload

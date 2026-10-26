@@ -4,6 +4,7 @@ import { isArchiveFile, isDocumentFile, isImageFile, isPdfFile, isSpreadsheetFil
 import { DocumentThumbnail } from './DocumentThumbnail.jsx';
 import { filesApi } from '../filesApi.js';
 import './mediaThumbnail.css';
+import { useCompatibleImage } from '../useCompatibleImage.js';
 
 const pending = [];
 let active = 0;
@@ -34,6 +35,7 @@ function Thumbnail({ file, fallback, size }) {
   const [frame, setFrame] = useState('');
   const videoFile = isVideoFile(file);
   const src = filesApi.previewUrl(file.id);
+  const compatible = useCompatibleImage(visible && !videoFile ? src : '', file.name);
 
   useEffect(() => {
     const observer = new IntersectionObserver(entries => {
@@ -100,10 +102,10 @@ function Thumbnail({ file, fallback, size }) {
     };
   }, [visible, videoFile, src]);
 
-  const image = videoFile ? frame : visible ? src : '';
+  const image = videoFile ? frame : compatible.url;
   return (
     <span ref={ref} className="media-thumbnail" style={{ width: size, height: size }} aria-hidden="true">
-      {failed || !image ? fallback : <img src={image} alt="" draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} />}
+      {failed || compatible.error || !image ? fallback : <img src={image} alt="" draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} />}
       {videoFile && frame && !failed ? <span className="thumbnail-video-mark"><Play size={9} fill="currentColor" /></span> : null}
     </span>
   );

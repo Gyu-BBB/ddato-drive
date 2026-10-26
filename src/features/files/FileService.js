@@ -172,12 +172,12 @@ export class FileService {
           storedName: stored.storedName,
           mimeType: mimeTypePolicy.normalize(upload.mimeType, uniqueName),
           sizeBytes: upload.sizeBytes,
-          storagePath: stored.storagePath
-          , accessPasswordHash: replacement?.access_password_hash || null,
+          storagePath: stored.storagePath,
+          accessPasswordHash: replacement?.access_password_hash || null,
           accessPasswordSetAt: replacement?.access_password_set_at || null
         });
         if (upload.uploadSessionMetadata) uploadCompletionRepository.record(upload.uploadSessionMetadata, created.id);
-        return created;
+        return upload.photoMetadata ? fileRepository.setSourceMetadata(created.id, upload.photoMetadata) : created;
       });
     } catch (error) {
       try { fs.renameSync(stored.absolutePath, upload.tempPath); }
@@ -645,6 +645,7 @@ export class FileService {
         accessPasswordHash: row.access_password_hash || null,
         accessPasswordSetAt: row.access_password_set_at || null
       });
+      copy = fileRepository.setSourceMetadata(copy.id, { sourceModifiedAt: row.source_modified_at, capturedAt: row.captured_at, contentSha256: row.content_sha256 });
     }
 
     const children = byParent.get(row.id) || [];
@@ -671,7 +672,9 @@ export class FileService {
   serializeFilesForRequest(req, ownerId, files, { includeDeleted = false } = {}) {
     const rows = fileRepository.listFoldersByOwner(ownerId, { includeDeleted });
     const byId = new Map(rows.map((row) => [row.id, row]));
+    const photoCounts = files.some(file => file.content_sha256) ? fileRepository.photoCounts(ownerId) : new Map();
     return files.map((file) => serializeFile(file, {
+      duplicatePhotoCount: Math.max(0, (photoCounts.get(file.content_sha256) || 1) - 1),
       path: this.buildPath(file, byId),
       ...accessPasswordService.serializeFileProtection(req, file, byId)
     }));
@@ -679,6 +682,7 @@ export class FileService {
 
   serializeFileForRequest(req, file, extra = {}) {
     return serializeFile(file, {
+      duplicatePhotoCount: file.content_sha256 ? Math.max(0, (fileRepository.photoCounts(file.owner_id).get(file.content_sha256) || 1) - 1) : 0,
       ...accessPasswordService.serializeFileProtection(req, file),
       ...extra
     });

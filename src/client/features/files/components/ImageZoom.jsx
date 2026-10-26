@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch';
 import { Button } from '../../../shared/components/Button.jsx';
 import './imageZoom.css';
+import { useCompatibleImage } from '../useCompatibleImage.js';
 
 export const ZOOM_TOOLBAR_HEIGHT = 44;
 
@@ -60,10 +61,12 @@ export function ImageZoom({ children, baseScale = 1, resetKey = '', disabled = f
 }
 
 export function ZoomableImage({ src, alt, onClose }) {
+  const compatible = useCompatibleImage(src, alt);
   const rootRef = useRef(null);
   const [natural, setNatural] = useState(null);
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [failed, setFailed] = useState(false);
+  useEffect(() => { setNatural(null); setFailed(false); }, [src]);
   useEffect(() => {
     const observer = new ResizeObserver(([entry]) => setViewport({ width: Math.max(1, entry.contentRect.width - 16), height: Math.max(1, entry.contentRect.height - ZOOM_TOOLBAR_HEIGHT - 16) }));
     observer.observe(rootRef.current);
@@ -72,7 +75,7 @@ export function ZoomableImage({ src, alt, onClose }) {
   const baseScale = natural ? Math.min(viewport.width / natural.width, viewport.height / natural.height) : 1;
   return <div ref={rootRef} className="zoomable-image" aria-label={alt}>
     <ImageZoom baseScale={baseScale} resetKey={`${src}:${viewport.width}:${viewport.height}`} disabled={!natural || failed} onClose={onClose}>
-      <img src={src} alt={alt} draggable={false} onLoad={event => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} onError={() => setFailed(true)} />
+      {compatible.url ? <img src={compatible.url} alt={alt} draggable={false} onLoad={event => { setFailed(false); setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }); }} onError={() => setFailed(true)} /> : <span role="status">{compatible.error || '사진 불러오는 중'}</span>}
     </ImageZoom>
   </div>;
 }

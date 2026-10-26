@@ -9,6 +9,7 @@ import { resumableUploadService } from "./ResumableUploadService.js";
 import { zipArchiveService } from "./ZipArchiveService.js";
 import { limitUploadRequests, parseMultipartUpload } from './upload.middleware.js';
 import { storageInsightsService } from '../system/StorageInsightsService.js';
+import { photoMetadataService, normalizeSourceDate } from './PhotoMetadataService.js';
 
 const uploadChunk = express.raw({
   type: "application/octet-stream",
@@ -62,7 +63,7 @@ filesRouter.get("/trash", requireUser, asyncRoute((req, res) => {
   });
 }));
 
-filesRouter.post("/files/upload", requireUser, limitUploadRequests, parseMultipartUpload, asyncRoute((req, res) => {
+filesRouter.post("/files/upload", requireUser, limitUploadRequests, parseMultipartUpload, asyncRoute(async (req, res) => {
   const file = req.file;
   if (!file) {
     jsonError(res, 400, "Upload file is required.");
@@ -70,7 +71,9 @@ filesRouter.post("/files/upload", requireUser, limitUploadRequests, parseMultipa
   }
 
   try {
+    const photoMetadata = await photoMetadataService.inspect(file.path, { name: req.body?.name || file.originalname, mimeType: file.mimetype, sizeBytes: file.size });
     const record = fileService.createFileFromUpload(req, {
+      photoMetadata: { ...photoMetadata, sourceModifiedAt: normalizeSourceDate(req.body?.sourceModifiedAt) },
       ownerId: req.body?.ownerId,
       parentId: req.body?.parentId,
       tempPath: file.path,

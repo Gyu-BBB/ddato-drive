@@ -32,6 +32,8 @@ const SIDE_PANEL_DEFAULT_WIDTH = 360;
 const SIDE_PANEL_MAX_WIDTH = 820;
 const viewModeIds = ["icon", "list", "column", "gallery"];
 const sortOptions = [
+  { id: "capturedAt", label: "촬영일" },
+  { id: "sourceModifiedAt", label: "원본 수정일" },
   { id: "name", label: "이름" },
   { id: "size", label: "용량" },
   { id: "extension", label: "확장자" },
