@@ -7,7 +7,7 @@ export function normalizePathname(pathname) {
 export function appPage(pathname) {
   const path = normalizePathname(pathname);
   if (path === "/" || matchPath("/folders/:folderId", path)) return "drive";
-  if (["/media", "/notes", "/trash", "/shared"].includes(path)) return path.slice(1);
+  if (["/media", "/notes", "/trash", "/shared", "/storage"].includes(path)) return path.slice(1);
   if (["/admin", "/admin/system", "/admin/users", "/admin/files", "/admin/audit"].includes(path)) return "admin";
   return null;
 }

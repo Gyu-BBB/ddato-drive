@@ -8,6 +8,7 @@ import { fileService } from "./FileService.js";
 import { resumableUploadService } from "./ResumableUploadService.js";
 import { zipArchiveService } from "./ZipArchiveService.js";
 import { limitUploadRequests, parseMultipartUpload } from './upload.middleware.js';
+import { storageInsightsService } from '../system/StorageInsightsService.js';
 
 const uploadChunk = express.raw({
   type: "application/octet-stream",
@@ -15,6 +16,10 @@ const uploadChunk = express.raw({
 });
 
 export const filesRouter = express.Router();
+
+filesRouter.get('/storage-insights', requireUser, asyncRoute((req, res) => {
+  res.json({ ok: true, storage: storageInsightsService.get(req) });
+}));
 
 filesRouter.get("/files", requireUser, asyncRoute((req, res) => {
   res.json({

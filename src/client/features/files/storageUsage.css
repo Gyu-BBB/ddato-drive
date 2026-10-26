@@ -1,0 +1,12 @@
+.storage-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin: 8px 0 24px; }
+.storage-totals dt { font-size: 12px; color: #626a73; }
+.storage-totals dd { margin: 8px 0 0; font-size: 22px; overflow-wrap: anywhere; }
+.storage-section { padding: 24px 0; border-bottom: 1px solid #dfe2e6; }
+.storage-section h2 { font-size: 16px; margin: 0 0 16px; }
+.storage-kind { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin: 14px 0; font-size: 13px; }
+.storage-kind progress { grid-column: 1 / -1; width: 100%; height: 6px; accent-color: #258a65; }
+.kind-image progress { accent-color: #2176d2; }.kind-video progress { accent-color: #ac485d; }.kind-archive progress { accent-color: #b18a15; }
+.storage-file { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; font-size: 13px; }
+.storage-file > div { min-width: 0; overflow-wrap: anywhere; }.storage-file > strong { flex: 0 0 auto; max-width: 50%; overflow-wrap: anywhere; }
+.storage-file small { display: block; margin-top: 6px; color: #626a73; }
+@media(max-width: 600px) { .storage-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }.storage-totals dd { font-size: 19px; } }

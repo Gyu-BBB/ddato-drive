@@ -22,12 +22,13 @@ try {
   fs.mkdirSync('.tmp', { recursive: true });
   for (const width of [1440, 390, 360]) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
-    for (const route of ['/shared', '/admin']) {
+    for (const route of ['/shared', '/admin', '/storage']) {
       await page.goto(`${base}${route}`);
       if (route === '/shared') await page.getByText(file.name, { exact: true }).waitFor();
-      else await page.getByRole('button', { name: '읽기 전용 점검', exact: true }).waitFor();
+      else if (route === '/admin') await page.getByRole('button', { name: '읽기 전용 점검', exact: true }).waitFor();
+      else await page.getByRole('heading', { name: '파일 종류별 사용량' }).waitFor();
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route} overflow at ${width}`);
-      await page.screenshot({ path: `.tmp/management-${route === '/shared' ? 'shared' : 'system'}-${width}.png`, fullPage: true });
+      await page.screenshot({ path: `.tmp/management-${route.slice(1)}-${width}.png`, fullPage: true });
     }
   }
   await page.goto(`${base}/shared`);
