@@ -16,6 +16,28 @@ import { shareRepository } from "./ShareRepository.js";
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 export class ShareService {
+  listOwned(requestUser, query, urlBuilder) {
+    const page = Math.min(100000, Math.max(0, Math.floor(Number(query.page) || 0)));
+    const { rows, total } = shareRepository.listOwned(requestUser.id, { state: query.state, page });
+    const folders = new Map(fileRepository.listFoldersByOwner(requestUser.id, { includeDeleted: true }).map(row => [row.id, row]));
+    return { page, total, shares: rows.map(row => {
+      const names = []; const seen = new Set(); let folder = folders.get(row.parent_id);
+      while (folder && !seen.has(folder.id)) { seen.add(folder.id); names.unshift(folder.original_name); folder = folders.get(folder.parent_id); }
+      return { ...serializeShare(row, urlBuilder(row.token)), name: row.file_name, fileType: row.file_type, path: ['홈', ...names].join(' / ') };
+    }) };
+  }
+
+  revokeOwned(requestUser, ids) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 || ids.some(id => typeof id !== 'string')) fail(400, '공유 링크를 1~100개 선택해 주세요.');
+    const unique = [...new Set(ids)];
+    for (const id of unique) {
+      const share = shareRepository.findById(id);
+      if (!share || share.owner_id !== requestUser.id) fail(404, '공유 링크를 찾을 수 없습니다.');
+    }
+    withTransaction(() => shareRepository.revokeIds(unique));
+    return { revoked: unique.length };
+  }
+
   getActiveShare(requestUser, fileId, urlBuilder = null) {
     const file = this.getShareableFile(requestUser, fileId);
     const share = shareRepository.findActiveByFileId(file.id);

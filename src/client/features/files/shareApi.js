@@ -1,6 +1,8 @@
 import { apiRequest } from "../../shared/api/apiClient.js";
 
 export const shareApi = {
+  listOwned: (state = 'all', page = 0) => apiRequest(`/api/my-shares?state=${encodeURIComponent(state)}&page=${page}`),
+  revokeOwned: ids => apiRequest('/api/my-shares/revoke', { method: 'POST', body: { ids } }),
   getActive: (fileId) => apiRequest(`/api/files/${encodeURIComponent(fileId)}/share`),
   create: (fileId, mode, password = "") => apiRequest(`/api/files/${encodeURIComponent(fileId)}/share`, {
     method: "POST",

@@ -1,4 +1,5 @@
-import { FileText, Folder, HardDrive, Images, LogOut, Shield, Trash2, UserRound } from "lucide-react";
+import { FileText, Folder, HardDrive, Images, Link, LogOut, Shield, Trash2, UserRound } from "lucide-react";
+import { SharedLinksPage } from '../features/files/SharedLinksPage.jsx';
 import { useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { AdminPage } from "../features/admin/AdminPage.jsx";
@@ -89,6 +90,7 @@ function AppFrame() {
           <button data-section="trash" className={view === "trash" ? "nav-item active" : "nav-item"} onClick={() => goPage("/trash")} title="휴지통" aria-label="휴지통">
             <Trash2 size={18} />
           </button>
+          <button data-section="shared" className={view === 'shared' ? 'nav-item active' : 'nav-item'} onClick={() => goPage('/shared')} title="공유 링크" aria-label="공유 링크"><Link size={18} /></button>
           {isAdmin && (
             <button data-section="admin" className={view === "admin" ? "nav-item active" : "nav-item"} onClick={() => goPage("/admin")} title="관리" aria-label="관리">
               <Shield size={18} />
@@ -105,7 +107,7 @@ function AppFrame() {
       </aside>
 
       <section className="workspace">
-        {view === "admin" && isAdmin
+        {view === 'shared' ? <SharedLinksPage /> : view === "admin" && isAdmin
           ? <AdminPage />
           : view === "trash"
             ? <DriveRoute key="trash" trashMode ownerLabel="휴지통" />

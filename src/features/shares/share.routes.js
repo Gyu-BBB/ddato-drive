@@ -9,6 +9,15 @@ import { shareService } from "./ShareService.js";
 
 export const shareRouter = express.Router();
 
+shareRouter.get('/my-shares', requireUser, asyncRoute((req, res) => {
+  res.json({ ok: true, ...shareService.listOwned(req.user, req.query, token => buildShareUrl(req, token)) });
+}));
+shareRouter.post('/my-shares/revoke', requireUser, asyncRoute((req, res) => {
+  const result = shareService.revokeOwned(req.user, req.body?.ids);
+  auditLogger.record('file.share.revoke.batch', req, null, { ids: req.body.ids });
+  res.json({ ok: true, ...result });
+}));
+
 shareRouter.get("/files/:id/share", requireUser, asyncRoute((req, res) => {
   res.json({
     ok: true,
