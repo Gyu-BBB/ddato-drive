@@ -105,7 +105,16 @@ app.use((req, res) => {
 });
 
 app.use((error, _req, res, _next) => {
+  if (res.headersSent || res.destroyed) {
+    if (!res.destroyed) res.destroy();
+    return;
+  }
+  if (error.code === 'ENOSPC' || error.code === 'EDQUOT') {
+    jsonError(res, 507, '서버 디스크 공간이 부족합니다. 관리자에게 문의한 뒤 다시 시도해 주세요.', { details: { code: 'disk_full' } });
+    return;
+  }
   if (error instanceof multer.MulterError) {
+    if (error.details) { jsonError(res, error.statusCode || 400, error.message, { details: error.details }); return; }
     const status = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
     if (error.code === "LIMIT_FILE_SIZE") {
       jsonError(res, status, "파일이 너무 큽니다.", {
@@ -125,7 +134,7 @@ app.use((error, _req, res, _next) => {
     console.error(error);
   }
   const extra = error.details ? { details: error.details } : {};
-  jsonError(res, status, error.message || "Internal server error.", extra);
+  jsonError(res, status, status >= 500 ? '서버에서 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.' : error.message || 'Request failed.', extra);
 });
 
 const server = app.listen(config.port, config.host, () => {

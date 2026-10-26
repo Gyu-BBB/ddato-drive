@@ -111,15 +111,15 @@ export class ShareService {
   getPublicDownloadTarget(req, token) {
     const { share, file } = this.getActiveShareAndFile(token);
     this.assertPublicSharedItemAccess(req, share, file);
-    return this.getDownloadTargetForItem(file);
+    return this.getDownloadTargetForItem(file, req, share);
   }
 
   getPublicSharedItemDownloadTarget(req, token, itemId) {
     const { share, file: root } = this.getActiveShareAndFile(token);
     if (root.type !== "folder") fail(404, "Shared folder was not found.");
-    const item = this.getSharedTreeItem(root, itemId);
+    const item = this.getSharedTreeItem(root, itemId, share);
     this.assertPublicSharedItemAccess(req, share, item);
-    return this.getDownloadTargetForItem(item);
+    return this.getDownloadTargetForItem(item, req, share);
   }
 
   async getPublicPreviewTarget(req, token) {
@@ -216,6 +216,7 @@ export class ShareService {
     if (!file || file.deleted_at) {
       fail(404, "Shared item was not found.");
     }
+    this.assertShareProtectionVersion(share, fileRepository.loadActiveAncestors(file.id, file.owner_id));
     return { share, file };
   }
 
@@ -234,18 +235,21 @@ export class ShareService {
     };
   }
 
-  getSharedTreeItem(root, itemId) {
+  getSharedTreeItem(root, itemId, share = null) {
     const requestedId = String(itemId || "").trim();
     if (!requestedId) fail(404, "Shared item was not found.");
     const rows = fileRepository.loadActiveAncestors(requestedId, root.owner_id);
+    if (share) this.assertShareProtectionVersion(share, rows);
     const item = rows.find((row) => row.id === requestedId);
     if (!item || !rows.some(row => row.id === root.id)) fail(404, "Shared item was not found.");
     return item;
   }
 
-  getDownloadTargetForItem(file) {
+  getDownloadTargetForItem(file, req, share) {
     if (file.type === "folder") {
       const rows = fileRepository.loadActiveTree(file.id);
+      this.assertShareProtectionVersion(share, rows);
+      for (const row of rows) this.assertPublicSharedItemAccess(req, share, row);
       return {
         file,
         zipRows: rows,
@@ -289,6 +293,13 @@ export class ShareService {
 
   normalizeSharePassword(password) {
     return String(password || "").trim();
+  }
+
+  assertShareProtectionVersion(share, rows) {
+    if (rows.some(row => row.access_password_hash && Number(row.access_password_set_at) > Number(share.created_at))) {
+      shareRepository.revokeActiveForFile(share.file_id);
+      fail(404, '파일 잠금이 변경되어 이전 공유 링크가 해제되었습니다.');
+    }
   }
 
   isPublicPasswordRequired(req, share, file) {

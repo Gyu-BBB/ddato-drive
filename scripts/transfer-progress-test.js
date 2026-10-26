@@ -155,3 +155,79 @@ clearDownloads();
 assert.equal(getDownloads().length, 0);
 unsubscribe();
 console.log('Transfer progress tests passed.');
+
+let partialAborted = false;
+globalThis.window = { showSaveFilePicker: async () => ({ createWritable: async () => ({
+  write: async () => {}, close: async () => assert.fail('truncated transfers must not commit a local file'),
+  abort: async () => { partialAborted = true; }
+}) }) };
+globalThis.fetch = async () => new Response(new Uint8Array([1, 2]), { headers: { 'Content-Length': '4' } });
+await startDownload('/truncated', 'truncated.bin');
+assert(partialAborted); assert.equal(getDownloads().at(-1).status, 'failed');
+clearDownloads();
+globalThis.window.showSaveFilePicker = async () => ({ createWritable: async () => ({ write: async () => {}, close: async () => {}, abort: async () => {} }) });
+globalThis.fetch = async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Length': '1', 'Content-Encoding': 'gzip' } });
+await startDownload('/decoded', 'decoded.bin');
+assert.equal(getDownloads().at(-1).status, 'done', 'decoded bytes must not be compared with encoded Content-Length');
+clearDownloads();
+
+let activeDownloads = 0;
+let peakDownloads = 0;
+let requestsStarted = 0;
+globalThis.window.showSaveFilePicker = async () => ({ createWritable: async () => ({ write: async () => {}, close: async () => {}, abort: async () => {} }) });
+globalThis.fetch = async () => {
+  activeDownloads++; requestsStarted++; peakDownloads = Math.max(peakDownloads, activeDownloads);
+  return new Response(new ReadableStream({ start(controller) {
+    setTimeout(() => { activeDownloads--; controller.enqueue(new Uint8Array([1])); controller.close(); }, 40);
+  } }), { headers: { 'Content-Length': '1' } });
+};
+const downloads = Array.from({ length: 25 }, (_, index) => startDownload('/concurrent', `file-${index}.bin`));
+await new Promise(resolve => setTimeout(resolve, 10));
+assert.equal(getDownloads().at(-1).status, 'queued');
+cancelDownload(getDownloads().at(-1).id);
+clearDownloads();
+assert(getDownloads().length >= 24, 'clearing completed entries must keep queued transfers');
+await Promise.all(downloads);
+assert.equal(peakDownloads, 10); assert.equal(requestsStarted, 24);
+clearDownloads();
+
+const nativeStarts = [];
+let canceledBodies = 0;
+globalThis.window = {};
+globalThis.document = {
+  body: { append() {} },
+  createElement(tag) { return { tag, children: [], append(child) { this.children.push(child); }, remove() {},
+    click() { nativeStarts.push({ tag, url: this.href }); },
+    submit() { nativeStarts.push({ tag, url: this.action, ids: this.children.map(child => child.value) }); }
+  }; }
+};
+globalThis.fetch = async () => new Response(new ReadableStream({ cancel() { canceledBodies++; } }), {
+  headers: { 'Content-Length': String(129 * 1024 * 1024) }
+});
+await startDownload('/large-native', 'large.bin');
+assert.equal(getDownloads().at(-1).status, 'browser');
+await startDownload('/api/files/download', 'selection.zip', { method: 'POST', body: { ids: ['one', 'two'] } });
+assert.equal(getDownloads().at(-1).status, 'browser');
+assert.deepEqual(nativeStarts, [{ tag: 'a', url: '/large-native' }, { tag: 'form', url: '/api/files/download', ids: ['one', 'two'] }]);
+assert.equal(canceledBodies, 2);
+clearDownloads();
+console.log('Download reliability passed: truncated-file rejection, ten active transfers, queued cancellation/clearing and memory-safe native large-file/ZIP handoff.');
+const { retryTransfer } = await import('../src/client/shared/lib/retryTransfer.js');
+let attempts = 0;
+const retryEvents = [];
+assert.equal(await retryTransfer(async () => {
+  if (++attempts < 3) throw Object.assign(new Error('temporary'), { status: 503 });
+  return 'recovered';
+}, { delayMs: 0, onRetry: attempt => retryEvents.push(attempt) }), 'recovered');
+assert.deepEqual(retryEvents, [1, 2]);
+attempts = 0;
+await assert.rejects(retryTransfer(async () => { attempts++; throw Object.assign(new Error('quota'), { status: 413 }); }, { delayMs: 0 }));
+assert.equal(attempts, 1, 'quota and permission failures must not be retried');
+attempts = 0;
+await assert.rejects(retryTransfer(async () => { attempts++; throw new TypeError('network'); }, { delayMs: 0 }));
+assert.equal(attempts, 4, 'transient retries must be bounded');
+const interruptedRetry = new AbortController();
+await assert.rejects(retryTransfer(async () => { throw new TypeError('network'); }, {
+  signal: interruptedRetry.signal, delayMs: 0, onRetry: () => interruptedRetry.abort()
+}));
+console.log('Transfer retries passed: bounded transient retries, non-retryable quotas and abortable backoff.');

@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronDown, ChevronUp, Loader2, PauseCircle, PlayCircle, RotateCcw, Trash2, UploadCloud, X, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Download, Loader2, PauseCircle, PlayCircle, RotateCcw, Trash2, UploadCloud, X, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../../../shared/lib/formatBytes.js";
 import { formatPercent } from "../../../shared/lib/formatPercent.js";
@@ -66,7 +66,7 @@ export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, 
               <X size={15} />
             </button>
           ) : null}
-          {summary.done || (downloading && summary.failed) ? (
+          {summary.done || (downloading && (summary.failed || summary.browser)) ? (
             <button className="upload-action" type="button" onClick={onClearCompleted} title="완료된 내용 지우기" aria-label={`완료된 ${title} 내용 지우기`}>
               <Trash2 size={15} />
             </button>
@@ -144,19 +144,23 @@ function summarizeUploads(uploads) {
       result.canCancel = result.canCancel || !upload.transient;
     } else if (upload.status === "done") {
       result.done += 1;
+    } else if (upload.status === 'browser') {
+      result.browser += 1;
     }
     return result;
-  }, { total: 0, active: 0, uploading: 0, queued: 0, paused: 0, failed: 0, done: 0, progressTotal: 0, canPause: false, canResume: false, canCancel: false });
+  }, { total: 0, active: 0, uploading: 0, queued: 0, paused: 0, failed: 0, done: 0, browser: 0, progressTotal: 0, canPause: false, canResume: false, canCancel: false });
 
   const progress = summary.active ? Math.round(summary.progressTotal / summary.active) : 100;
   if (summary.uploading) return { ...summary, progress, label: `${summary.uploading}개 업로드 중` };
   if (summary.queued) return { ...summary, progress, label: `${summary.queued}개 대기 중` };
   if (summary.paused) return { ...summary, progress, label: `${summary.paused}개 일시정지됨` };
   if (summary.failed) return { ...summary, progress, label: `${summary.failed}개 확인 필요` };
+  if (summary.browser) return { ...summary, progress, label: `${summary.browser}개 브라우저로 전달됨` };
   return { ...summary, progress, label: `${summary.done}개 완료` };
 }
 
 function statusIcon(status) {
+  if (status === 'browser') return <Download size={17} />;
   if (status === "done") return <CheckCircle2 size={17} color="var(--dd-success)" />;
   if (status === "failed" || status === "canceled") return <XCircle size={17} color="var(--dd-danger)" />;
   if (status === "paused") return <PauseCircle size={17} />;
@@ -165,7 +169,7 @@ function statusIcon(status) {
 }
 
 function rowActions(upload, actions) {
-  if (upload.transient || upload.status === "done") return null;
+  if (upload.transient || upload.status === "done" || upload.status === 'browser') return null;
   const label = upload.name || upload.displayName || "파일";
 
   if (upload.status === "uploading" || upload.status === "queued") {
@@ -219,6 +223,7 @@ function uploadLabel(upload) {
   if (upload.status === "done") return `업로드됨${suffix}`;
   if (upload.status === "canceled") return `취소됨${suffix}`;
   if (upload.status === "failed") return `실패${suffix}`;
+  if (upload.status === 'browser') return '브라우저 다운로드에서 진행 상황을 확인하세요.';
   return `${upload.status}${suffix}`;
 }
 

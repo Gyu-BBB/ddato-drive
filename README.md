@@ -263,7 +263,12 @@ This is a self-hosted application. Before exposing it publicly:
 
 ## Local Server Resource Policy
 
-- Account upload concurrency remains 10; ordinary file downloads remain streamed.
+- Account upload concurrency remains 10, with request admission before body parsing; application-managed download streams also use 10 slots. Native download handoffs are managed separately by the browser. Ordinary file downloads remain streamed.
+- New uploads reserve available account/project capacity before persisting the file in browser storage or transferring its contents. Rejected files are not copied into IndexedDB; browser storage failures release server reservations. Admitted files waiting for a transfer slot retain reload recovery.
+- Resumable uploads use stable client operation IDs, transactional completion receipts and cancellation tombstones retained for 30 days. Lost responses and reloads do not create duplicate files. Partial chunk writes resume from their actual on-disk offset; conflicting retransmissions are rejected.
+- Transient upload connection/server failures retry up to three times with abortable backoff and confirmed-offset resynchronization; retry chunks shrink on unstable connections. Quota/authentication failures do not retry. Control requests and binary uploads have bounded timeouts.
+- Single and shared folder ZIP downloads validate descendant file protection. Setting or changing file/folder protection revokes existing share links for the affected tree and ancestors.
+- File downloads support single/suffix ranges and release streams on disconnect. In browsers without direct-to-disk saving, downloads above 128 MiB are handed to the browser instead of retaining an unbounded Blob; the transfer card explicitly reports browser handoff, not completion, and progress/cancel controls move to the browser. Multi-selection handoff remains one ZIP.
 - File metadata uses one folder lookup per response rather than reloading all files for each password check. Single-file protection checks only traverse ancestors, without caching authorization decisions.
 - Shared-folder navigation and item access validate ancestor membership instead of loading the complete shared subtree each time.
 - ZIP downloads use native CRC32, asynchronous file stats, and streaming backpressure; client disconnects stop generation.
@@ -281,6 +286,7 @@ Run the production build and smoke test:
 npm run build
 npm run smoke
 npm run test:transfers
+npm run test:transfer-reliability
 npm run test:transfer-ui
 node scripts/upload-concurrency-test.js
 npm run test:folder-upload

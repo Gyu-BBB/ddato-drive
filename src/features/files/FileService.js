@@ -17,6 +17,8 @@ import { documentPreviewWorkerService } from "./DocumentPreviewWorkerService.js"
 import { documentPdfPreviewService } from "./DocumentPdfPreviewService.js";
 import { documentPreviewJobService } from "./DocumentPreviewJobService.js";
 import { uploadSessionStore } from "./UploadSessionStore.js";
+import { uploadCompletionRepository } from './UploadCompletionRepository.js';
+import { multipartReservationStore } from './MultipartReservationStore.js';
 import { shareService } from "../shares/ShareService.js";
 import { accessPasswordService } from "../protection/AccessPasswordService.js";
 import { archivePreviewService } from './ArchivePreviewService.js';
@@ -115,17 +117,20 @@ export class FileService {
   }
 
   createFileFromUpload(req, upload) {
-    const requestUser = req.user;
+    const requestUser = userRepository.findById(req.user.id);
+    if (!requestUser || requestUser.disabled_at) fail(403, '업로드 권한이 변경되었습니다. 다시 로그인해 주세요.');
+    req.user = requestUser;
     const owner = this.resolveTargetOwner(requestUser, upload.ownerId);
     const parentId = this.normalizeParentId(upload.parentId);
     if (parentId) this.assertFolderAccess(req, owner.id, parentId);
 
     this.assertUserQuota(owner, upload.sizeBytes, {
-      excludeUploadSessionId: upload.uploadSessionId
+      excludeUploadSessionId: upload.uploadSessionId,
+      excludeRequest: req
     });
     this.assertProjectQuota(uploadSessionStore.getPendingRemainingBytes({
       excludeSessionId: upload.uploadSessionId
-    }));
+    }), { excludeRequest: req });
 
     const fileId = crypto.randomUUID();
     const safeName = fileNamePolicy.sanitizeUploadName(upload.originalName, "upload");
@@ -137,21 +142,28 @@ export class FileService {
       displayName: uniqueName
     });
 
+    let record;
     try {
-      return this.serializeFileForRequest(req, fileRepository.insertFile({
-        id: fileId,
-        ownerId: owner.id,
-        parentId,
-        name: uniqueName,
-        storedName: stored.storedName,
-        mimeType: mimeTypePolicy.normalize(upload.mimeType, uniqueName),
-        sizeBytes: upload.sizeBytes,
-        storagePath: stored.storagePath
-      }));
+      record = withTransaction(() => {
+        const created = fileRepository.insertFile({
+          id: fileId,
+          ownerId: owner.id,
+          parentId,
+          name: uniqueName,
+          storedName: stored.storedName,
+          mimeType: mimeTypePolicy.normalize(upload.mimeType, uniqueName),
+          sizeBytes: upload.sizeBytes,
+          storagePath: stored.storagePath
+        });
+        if (upload.uploadSessionMetadata) uploadCompletionRepository.record(upload.uploadSessionMetadata, created.id);
+        return created;
+      });
     } catch (error) {
-      fs.rmSync(stored.absolutePath, { force: true });
+      try { fs.renameSync(stored.absolutePath, upload.tempPath); }
+      catch { fs.rmSync(stored.absolutePath, { force: true }); }
       throw error;
     }
+    return this.serializeFileForRequest(req, record);
   }
 
   renameFile(req, fileId, name) {
@@ -167,7 +179,13 @@ export class FileService {
     if (file.access_password_hash) {
       accessPasswordService.assertFileAccess(req, file);
     }
-    const nextFile = fileRepository.setAccessPassword(file.id, accessPasswordService.hash(password));
+    const passwordHash = accessPasswordService.hash(password);
+    const nextFile = withTransaction(() => {
+      const updated = fileRepository.setAccessPassword(file.id, passwordHash);
+      const protectedTree = file.type === 'folder' ? fileRepository.loadActiveTree(file.id) : [file];
+      shareService.revokeSharesForFiles([...protectedTree, ...fileRepository.loadActiveAncestors(file.id, file.owner_id)]);
+      return updated;
+    });
     accessPasswordService.revokeUnlocksForResource(nextFile.id);
     return this.serializeFileForRequest(req, nextFile);
   }
@@ -355,6 +373,7 @@ export class FileService {
     accessPasswordService.assertFileAccess(req, file);
     if (file.type === "folder") {
       const rows = fileRepository.loadActiveTree(file.id);
+      accessPasswordService.assertFileTreeAccess(req, file, rows);
       return {
         file,
         zipRows: rows,
@@ -512,8 +531,9 @@ export class FileService {
     fail(400, "Folder color is not supported.");
   }
 
-  assertProjectQuota(additionalBytes = 0, { maxAgeMs = 0 } = {}) {
-    let storage = getProjectStorageUsage({ maxAgeMs });
+  assertProjectQuota(additionalBytes = 0, { maxAgeMs = 0, excludeRequest } = {}) {
+    additionalBytes += multipartReservationStore.remainingBytes({ excludeRequest });
+    let storage = getProjectStorageUsage({ maxAgeMs: multipartReservationStore.hasActive() ? 0 : maxAgeMs });
     // Reconcile near capacity, including changes made outside upload sessions.
     if (maxAgeMs && storage.usedBytes + Number(additionalBytes || 0) + 64 * 1024 * 1024 >= config.projectDiskQuotaBytes) {
       storage = getProjectStorageUsage();
@@ -530,21 +550,22 @@ export class FileService {
     }
   }
 
-  assertUserQuota(owner, additionalBytes = 0, { excludeUploadSessionId = "" } = {}) {
+  assertUserQuota(owner, additionalBytes = 0, { excludeUploadSessionId = "", excludeRequest } = {}) {
     const usageBytes = fileRepository.getUsageBytes(owner.id);
     const pendingBytes = uploadSessionStore.getPendingBytes({
       ownerId: owner.id,
       excludeSessionId: excludeUploadSessionId
     });
-    const nextBytes = usageBytes + pendingBytes + Number(additionalBytes || 0);
+    const multipartBytes = multipartReservationStore.pendingBytes({ ownerId: owner.id, excludeRequest });
+    const nextBytes = usageBytes + pendingBytes + multipartBytes + Number(additionalBytes || 0);
 
     if (owner.quota_bytes != null && nextBytes > owner.quota_bytes) {
       fail(413, "저장 공간이 부족합니다.", {
         code: "user_quota_exceeded",
         usageBytes,
-        pendingBytes,
+        pendingBytes: pendingBytes + multipartBytes,
         quotaBytes: owner.quota_bytes,
-        remainingBytes: Math.max(0, owner.quota_bytes - usageBytes - pendingBytes),
+        remainingBytes: Math.max(0, owner.quota_bytes - usageBytes - pendingBytes - multipartBytes),
         fileBytes: additionalBytes
       });
     }

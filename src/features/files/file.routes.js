@@ -1,22 +1,14 @@
 import express from "express";
 import fs from "node:fs";
-import multer from "multer";
 import { config } from "../../core/config.js";
 import { asyncRoute, contentDisposition, jsonError, sendFileStream } from "../../core/http.js";
-import { getProjectStorageUsage } from "../../core/storageUsage.js";
 import { auditLogger } from "../audit/AuditLogger.js";
 import { requireUser } from "../auth/auth.middleware.js";
 import { fileService } from "./FileService.js";
 import { resumableUploadService } from "./ResumableUploadService.js";
 import { zipArchiveService } from "./ZipArchiveService.js";
+import { limitUploadRequests, parseMultipartUpload } from './upload.middleware.js';
 
-const upload = multer({
-  dest: config.tempDir,
-  limits: {
-    files: 1,
-    fileSize: config.maxUploadBytes
-  }
-});
 const uploadChunk = express.raw({
   type: "application/octet-stream",
   limit: config.maxUploadChunkBytes
@@ -65,7 +57,7 @@ filesRouter.get("/trash", requireUser, asyncRoute((req, res) => {
   });
 }));
 
-filesRouter.post("/files/upload", requireUser, rejectRequestOverProjectCapacity, upload.single("file"), asyncRoute((req, res) => {
+filesRouter.post("/files/upload", requireUser, limitUploadRequests, parseMultipartUpload, asyncRoute((req, res) => {
   const file = req.file;
   if (!file) {
     jsonError(res, 400, "Upload file is required.");
@@ -100,12 +92,20 @@ filesRouter.get("/files/upload-sessions/:sessionId", requireUser, asyncRoute((re
   res.json({ ok: true, session });
 }));
 
-filesRouter.post("/files/upload-sessions/:sessionId/chunk", requireUser, uploadChunk, asyncRoute(async (req, res) => {
-  const session = await resumableUploadService.appendChunk(req.user, req.params.sessionId, {
-    offset: req.header("x-upload-offset"),
-    buffer: req.body
-  });
-  res.json({ ok: true, session });
+filesRouter.post('/files/upload-sessions/cancel', requireUser, asyncRoute(async (req, res) => {
+  const result = await resumableUploadService.cancelByClientId(req.user, req.body?.clientUploadId);
+  res.json({ ok: true, ...result });
+}));
+
+filesRouter.post("/files/upload-sessions/:sessionId/chunk", requireUser, limitUploadRequests, validateUploadChunk, uploadChunk, asyncRoute(async (req, res) => {
+  req.uploadWorkActive = true;
+  try {
+    const session = await resumableUploadService.appendChunk(req.user, req.params.sessionId, {
+      offset: req.header("x-upload-offset"),
+      buffer: req.body
+    });
+    if (!res.destroyed) res.json({ ok: true, session });
+  } finally { req.uploadWorkActive = false; req.releaseUploadSlot?.(); }
 }));
 
 filesRouter.post("/files/upload-sessions/:sessionId/complete", requireUser, asyncRoute(async (req, res) => {
@@ -120,8 +120,9 @@ filesRouter.delete("/files/upload-sessions/:sessionId", requireUser, asyncRoute(
   res.json({ ok: true, ...result });
 }));
 
-filesRouter.post("/files/download", requireUser, asyncRoute(async (req, res) => {
-  const target = fileService.getSelectionDownloadStreamTarget(req, req.body?.ids);
+filesRouter.post("/files/download", requireUser, express.urlencoded({ extended: false, limit: '64kb' }), asyncRoute(async (req, res) => {
+  const ids = req.is('application/x-www-form-urlencoded') && typeof req.body?.ids === 'string' ? [req.body.ids] : req.body?.ids;
+  const target = fileService.getSelectionDownloadStreamTarget(req, ids);
   auditLogger.record("file.download.selection", req, null, {
     rootIds: target.rootIds,
     count: target.rootIds.length
@@ -211,7 +212,7 @@ filesRouter.get("/files/:id/download", requireUser, asyncRoute(async (req, res) 
     return;
   }
 
-  sendFileStream(req, res, target.absolutePath, {
+  return sendFileStream(req, res, target.absolutePath, {
     fs,
     fileName: target.fileName || target.file.original_name,
     contentType: target.contentType,
@@ -233,7 +234,7 @@ filesRouter.get("/files/:id/preview", requireUser, asyncRoute(async (req, res) =
     sendJsonPreview(res, target);
     return;
   }
-  sendFileStream(req, res, target.absolutePath, {
+  return sendFileStream(req, res, target.absolutePath, {
     fs,
     fileName: target.fileName || target.file.original_name,
     contentType: target.contentType,
@@ -273,27 +274,14 @@ function sendJsonPreview(res, target, cacheControl = "private, no-store") {
   res.end(body);
 }
 
-function rejectRequestOverProjectCapacity(req, res, next) {
-  const contentLength = Number(req.headers["content-length"] || 0);
-  if (!Number.isFinite(contentLength) || contentLength <= 0) {
+function validateUploadChunk(req, res, next) {
+  try {
+    resumableUploadService.loadAuthorizedMetadata(req.user, req.params.sessionId);
+    const offset = req.header('x-upload-offset');
+    if (!req.is('application/octet-stream')) { jsonError(res, 415, 'Upload chunks must use application/octet-stream.'); return; }
+    if (offset == null || !/^\d+$/.test(offset) || !Number.isSafeInteger(Number(offset))) {
+      jsonError(res, 400, 'Valid upload offset is required.'); return;
+    }
     next();
-    return;
-  }
-
-  const storage = getProjectStorageUsage();
-  const availableBytes = Math.max(0, config.projectDiskQuotaBytes - Number(storage.usedBytes || 0));
-  if (contentLength > availableBytes) {
-    jsonError(res, 413, "프로젝트 저장 공간이 부족합니다.", {
-      details: {
-        code: "project_quota_exceeded",
-        usageBytes: storage.usedBytes,
-        quotaBytes: config.projectDiskQuotaBytes,
-        availableBytes,
-        fileBytes: contentLength
-      }
-    });
-    return;
-  }
-
-  next();
+  } catch (error) { next(error); }
 }

@@ -11,7 +11,7 @@ export function getProjectStorageUsage({ maxAgeMs = 0 } = {}) {
   const trashBytes = directorySize(config.trashDir);
   const previewCacheBytes = directorySize(config.previewCacheDir);
   const tempBytes = directorySize(config.tempDir);
-  const dbBytes = fileSize(config.dbFile);
+  const dbBytes = fileSize(config.dbFile) + fileSize(`${config.dbFile}-wal`) + fileSize(`${config.dbFile}-shm`);
 
   cachedUsage = {
     storageBytes,

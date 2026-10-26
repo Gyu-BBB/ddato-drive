@@ -8,6 +8,7 @@ export class UploadSessionStore {
     this.lastCleanupAt = 0;
     this.cachedSessions = null;
     this.cachedAt = 0;
+    this.activeSessionIds = new Set();
   }
 
   invalidate() {
@@ -53,6 +54,7 @@ export class UploadSessionStore {
 
     let deleted = 0;
     for (const session of this.listSessions({ cleanup: false })) {
+      if (this.activeSessionIds.has(session.metadata.id)) continue;
       const updatedAt = Number(session.metadata.updatedAt || session.metadata.createdAt || 0);
       if (updatedAt && now - updatedAt <= config.uploadSessionTtlMs) continue;
       fs.rmSync(session.dir, { recursive: true, force: true });

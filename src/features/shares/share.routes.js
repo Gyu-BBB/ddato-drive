@@ -64,7 +64,7 @@ shareRouter.get("/shares/:token/download", asyncRoute(async (req, res) => {
     return;
   }
 
-  sendFileStream(req, res, target.absolutePath, {
+  return sendFileStream(req, res, target.absolutePath, {
     fs,
     fileName: target.fileName || target.file.original_name,
     contentType: target.contentType,
@@ -86,7 +86,7 @@ shareRouter.get("/shares/:token/items/:id/download", asyncRoute(async (req, res)
     return;
   }
 
-  sendFileStream(req, res, target.absolutePath, {
+  return sendFileStream(req, res, target.absolutePath, {
     fs,
     fileName: target.fileName || target.file.original_name,
     contentType: target.contentType,
@@ -114,7 +114,7 @@ shareRouter.get("/shares/:token/preview", asyncRoute(async (req, res) => {
     sendJsonPreview(res, target);
     return;
   }
-  sendFileStream(req, res, target.absolutePath, {
+  return sendFileStream(req, res, target.absolutePath, {
     fs,
     fileName: target.fileName || target.file.original_name,
     contentType: target.contentType,

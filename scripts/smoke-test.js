@@ -667,7 +667,7 @@ try {
   const privateLockedTar = await rawRequest(`/api/files/${tarUpload.file.id}/preview`, { jar: userJar });
   assert(privateLockedTar.status === 423, 'TAR listing must respect file passwords');
   const publicLockedTar = await rawRequest(`/api/shares/${tarShare.share.token}/preview`);
-  assert(publicLockedTar.status === 423, 'TAR shared listing must respect file passwords');
+  assert(publicLockedTar.status === 404, 'setting a TAR file password must revoke its older share link');
   assert(countBufferOccurrences(selectedZip, Buffer.from("Documents/nested.txt")) === 2, "bulk selected ZIP duplicated a child selected with its folder");
 
   const permanentShare = await request(`/api/files/${uploaded.file.id}/share`, {

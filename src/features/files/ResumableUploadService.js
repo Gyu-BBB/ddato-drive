@@ -9,6 +9,8 @@ import { uploadSessionStore } from "./UploadSessionStore.js";
 import { userRepository } from "../users/UserRepository.js";
 import { recordProjectTempGrowth } from "../../core/storageUsage.js";
 import { UploadTransferLimiter } from "./UploadTransferLimiter.js";
+import { uploadCompletionRepository } from './UploadCompletionRepository.js';
+import { uploadCancellationRepository } from './UploadCancellationRepository.js';
 
 const SESSION_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 
@@ -25,7 +27,7 @@ export class ResumableUploadService {
     if (parentId) fileService.assertFolderAccess(req, owner.id, parentId);
 
     const sizeBytes = Number(payload.sizeBytes);
-    if (!Number.isFinite(sizeBytes) || sizeBytes < 0) fail(400, "Upload size is required.");
+    if (payload.sizeBytes == null || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) fail(400, "Upload size must be a whole number of bytes.");
     if (sizeBytes > config.maxUploadBytes) {
       fail(413, "파일이 너무 큽니다.", {
         code: "upload_file_too_large",
@@ -34,13 +36,30 @@ export class ResumableUploadService {
       });
     }
 
+    const clientUploadId = String(payload.clientUploadId || '').trim();
+    if (clientUploadId.length > 128) fail(400, 'Invalid client upload id.');
+    if (uploadCancellationRepository.has(requestUser.id, clientUploadId)) fail(410, '이미 취소된 업로드입니다. 파일을 새로 선택해 주세요.');
     uploadSessionStore.cleanupStaleSessions();
+    if (clientUploadId) {
+      const completed = uploadCompletionRepository.findByClientId(requestUser.id, clientUploadId);
+      const existing = completed?.metadata || uploadSessionStore.listSessions({ cleanup: true })
+        .find(entry => entry.metadata.requestUserId === requestUser.id && entry.metadata.clientUploadId === clientUploadId)?.metadata;
+      if (existing) {
+        if (existing.ownerId !== owner.id || existing.parentId !== parentId || existing.sizeBytes !== sizeBytes || existing.originalName !== (String(payload.name || 'upload').trim() || 'upload')) {
+          fail(409, 'The upload id belongs to another file.');
+        }
+        return completed ? this.completedStatus(requestUser, completed) : this.serializeStatus(existing);
+      }
+    }
+    uploadCompletionRepository.cleanup();
+    uploadCancellationRepository.cleanup();
     fileService.assertUserQuota(owner, sizeBytes);
     fileService.assertProjectQuota(sizeBytes + uploadSessionStore.getPendingRemainingBytes());
 
     const now = Date.now();
     const metadata = {
       id: crypto.randomUUID(),
+      clientUploadId,
       requestUserId: requestUser.id,
       ownerId: owner.id,
       parentId,
@@ -58,13 +77,23 @@ export class ResumableUploadService {
   }
 
   getStatus(requestUser, sessionId) {
-    return this.serializeStatus(this.loadAuthorizedMetadata(requestUser, sessionId));
+    const id = this.normalizeSessionId(sessionId);
+    const completed = uploadCompletionRepository.find(requestUser.id, id);
+    return completed ? this.completedStatus(requestUser, completed) : this.serializeStatus(this.loadAuthorizedMetadata(requestUser, id));
   }
 
   async appendChunk(requestUser, sessionId, payload) {
+    return this.withSessionLock(sessionId, id => this.transferLimiter.run(requestUser.id, () => this.writeChunk(requestUser, id, payload)));
+  }
+
+  async withSessionLock(sessionId, callback) {
     const id = this.normalizeSessionId(sessionId);
     const previous = this.chunkWrites.get(id) || Promise.resolve();
-    const pending = previous.catch(() => {}).then(() => this.transferLimiter.run(requestUser.id, () => this.writeChunk(requestUser, id, payload)));
+    const pending = previous.catch(() => {}).then(async () => {
+      uploadSessionStore.activeSessionIds.add(id);
+      try { return await callback(id); }
+      finally { uploadSessionStore.activeSessionIds.delete(id); }
+    });
     this.chunkWrites.set(id, pending);
     try {
       return await pending;
@@ -75,9 +104,10 @@ export class ResumableUploadService {
 
   async writeChunk(requestUser, sessionId, { offset, buffer }) {
     const metadata = this.loadAuthorizedMetadata(requestUser, sessionId);
-    const chunk = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || "");
+    if (!Buffer.isBuffer(buffer) || !buffer.length) fail(400, 'Upload chunk must contain binary data.');
+    const chunk = buffer;
     const requestedOffset = Number(offset);
-    if (!Number.isSafeInteger(requestedOffset) || requestedOffset < 0) {
+    if (offset == null || String(offset).trim() === '' || !Number.isSafeInteger(requestedOffset) || requestedOffset < 0) {
       fail(400, "Valid upload offset is required.");
     }
 
@@ -87,6 +117,17 @@ export class ResumableUploadService {
 
     if (requestedOffset < uploadedBytes) {
       if (requestedOffset + chunk.length <= uploadedBytes) {
+        const handle = await fs.promises.open(partialPath, 'r');
+        try {
+          const stored = Buffer.alloc(chunk.length);
+          let loaded = 0;
+          while (loaded < stored.length) {
+            const { bytesRead } = await handle.read(stored, loaded, stored.length - loaded, requestedOffset + loaded);
+            if (!bytesRead) break;
+            loaded += bytesRead;
+          }
+          if (loaded !== chunk.length || !stored.equals(chunk)) fail(409, 'Retried upload chunk does not match stored bytes.');
+        } finally { await handle.close(); }
         return this.serializeStatus(metadata);
       }
       fail(409, "Upload offset is behind the stored file.", this.serializeStatus(metadata));
@@ -110,8 +151,17 @@ export class ResumableUploadService {
   }
 
   async completeSession(req, sessionId) {
-    await this.chunkWrites.get(sessionId)?.catch(() => {});
+    return this.withSessionLock(sessionId, id => this.finishSession(req, id));
+  }
+
+  finishSession(req, sessionId) {
     const requestUser = req.user;
+    const completed = uploadCompletionRepository.find(requestUser.id, sessionId);
+    if (completed) {
+      this.completedStatus(requestUser, completed);
+      const file = fileService.getAccessibleFile(requestUser, completed.fileId);
+      return fileService.serializeFileForRequest(req, file);
+    }
     const metadata = this.loadAuthorizedMetadata(requestUser, sessionId);
     const partialPath = this.partialPath(metadata);
     if (metadata.sizeBytes === 0 && !fs.existsSync(partialPath)) {
@@ -130,7 +180,8 @@ export class ResumableUploadService {
       originalName: metadata.originalName,
       mimeType: metadata.mimeType,
       sizeBytes: metadata.sizeBytes,
-      uploadSessionId: metadata.id
+      uploadSessionId: metadata.id,
+      uploadSessionMetadata: metadata
     });
 
     fs.rmSync(this.sessionDir(metadata), { recursive: true, force: true });
@@ -139,10 +190,31 @@ export class ResumableUploadService {
   }
 
   async cancelSession(requestUser, sessionId) {
-    await this.chunkWrites.get(sessionId)?.catch(() => {});
+    return this.withSessionLock(sessionId, id => this.removeSession(requestUser, id));
+  }
+
+  removeSession(requestUser, sessionId) {
+    const completed = uploadCompletionRepository.find(requestUser.id, sessionId);
+    if (completed) return { canceled: false, completed: true, fileId: completed.fileId };
     const metadata = this.loadAuthorizedMetadata(requestUser, sessionId);
+    uploadCancellationRepository.record(requestUser.id, metadata.clientUploadId);
     fs.rmSync(this.sessionDir(metadata), { recursive: true, force: true });
     uploadSessionStore.invalidate();
+    return { canceled: true };
+  }
+
+  async cancelByClientId(requestUser, value) {
+    const clientId = String(value || '').trim();
+    if (!clientId || clientId.length > 128) fail(400, 'Invalid client upload id.');
+    const completed = uploadCompletionRepository.findByClientId(requestUser.id, clientId);
+    if (completed) return { canceled: false, completed: true, fileId: completed.fileId };
+    uploadCancellationRepository.record(requestUser.id, clientId);
+    const session = uploadSessionStore.listSessions({ cleanup: true })
+      .find(entry => entry.metadata.requestUserId === requestUser.id && entry.metadata.clientUploadId === clientId);
+    if (session) {
+      try { return await this.cancelSession(requestUser, session.metadata.id); }
+      catch (error) { if (error.statusCode !== 404) throw error; }
+    }
     return { canceled: true };
   }
 
@@ -155,6 +227,7 @@ export class ResumableUploadService {
     if (metadata.requestUserId !== requestUser.id || metadata.id !== id) {
       fail(403, "Access denied.");
     }
+    if (Date.now() - Number(metadata.updatedAt || metadata.createdAt || 0) > config.uploadSessionTtlMs) fail(404, 'Upload session has expired.');
     return metadata;
   }
 
@@ -172,6 +245,14 @@ export class ResumableUploadService {
       chunkSizeBytes: config.maxUploadChunkBytes,
       complete: uploadedBytes === metadata.sizeBytes
     };
+  }
+
+  completedStatus(requestUser, completion) {
+    fileService.resolveTargetOwner(requestUser, completion.metadata.ownerId);
+    const file = completion.fileId && fileRepository.findById(completion.fileId);
+    if (!file || file.deleted_at != null) fail(410, '이미 업로드된 파일이 삭제되었습니다. 다시 업로드하려면 파일을 새로 선택하세요.');
+    return { ...this.serializeStatus(completion.metadata), uploadedBytes: completion.metadata.sizeBytes, progress: 100,
+      complete: true, finalized: true, fileId: file.id };
   }
 
   uploadedBytes(metadata) {
@@ -198,7 +279,11 @@ export class ResumableUploadService {
     const metadataPath = this.metadataPath(metadata);
     const oldSize = fs.existsSync(metadataPath) ? fs.statSync(metadataPath).size : 0;
     const contents = JSON.stringify(metadata);
-    fs.writeFileSync(metadataPath, contents);
+    const pendingPath = `${metadataPath}.tmp`;
+    try {
+      fs.writeFileSync(pendingPath, contents);
+      fs.renameSync(pendingPath, metadataPath);
+    } finally { fs.rmSync(pendingPath, { force: true }); }
     recordProjectTempGrowth(Math.max(0, Buffer.byteLength(contents) - oldSize));
     uploadSessionStore.updateMetadata(metadata);
   }

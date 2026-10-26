@@ -44,12 +44,12 @@ export const filesApi = {
     if (name) form.set("name", name);
     return uploadForm("/api/files/upload", form, { onProgress, signal });
   },
-  createUploadSession: (payload, { signal = null } = {}) => apiRequest("/api/files/upload-sessions", {
+  createUploadSession: (payload, { signal = null } = {}) => uploadControlRequest("/api/files/upload-sessions", {
     method: "POST",
     body: payload,
     signal
   }),
-  getUploadSession: (sessionId, { signal = null } = {}) => apiRequest(`/api/files/upload-sessions/${encodeURIComponent(sessionId)}`, { signal }),
+  getUploadSession: (sessionId, { signal = null } = {}) => uploadControlRequest(`/api/files/upload-sessions/${encodeURIComponent(sessionId)}`, { signal }),
   uploadSessionChunk: (sessionId, { chunk, offset, onProgress = null, signal = null }) => {
     return uploadBlob(`/api/files/upload-sessions/${encodeURIComponent(sessionId)}/chunk`, chunk, {
       headers: {
@@ -60,11 +60,12 @@ export const filesApi = {
       signal
     });
   },
-  completeUploadSession: (sessionId, { signal = null } = {}) => apiRequest(`/api/files/upload-sessions/${encodeURIComponent(sessionId)}/complete`, {
+  completeUploadSession: (sessionId, { signal = null } = {}) => uploadControlRequest(`/api/files/upload-sessions/${encodeURIComponent(sessionId)}/complete`, {
     method: "POST",
     signal
   }),
   cancelUploadSession: (sessionId) => apiRequest(`/api/files/upload-sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
+  cancelUploadByClientId: (clientUploadId) => apiRequest('/api/files/upload-sessions/cancel', { method: 'POST', body: { clientUploadId } }),
   previewStatus: (id) => apiRequest(`/api/files/${encodeURIComponent(id)}/preview-status`),
   previewBlob: (id) => apiRequest(`/api/files/${encodeURIComponent(id)}/preview`, { responseType: "blob" }),
   previewUrl: (id) => `/api/files/${encodeURIComponent(id)}/preview`,
@@ -72,10 +73,24 @@ export const filesApi = {
   downloadUrl: (id) => `/api/files/${encodeURIComponent(id)}/download`
 };
 
+async function uploadControlRequest(path, options) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => controller.abort(new DOMException('업로드 연결 시간이 초과되었습니다.', 'TimeoutError')), 30000);
+  try { return await apiRequest(path, { ...options, signal: controller.signal }); }
+  catch (error) {
+    if (error instanceof SyntaxError) throw new ApiError('서버 응답을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.', 502);
+    throw error;
+  } finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
+}
+
 function uploadForm(path, form, { onProgress, signal } = {}) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", path);
+    request.timeout = 10 * 60 * 1000;
     request.withCredentials = true;
 
     const abort = () => {
@@ -117,6 +132,10 @@ function uploadForm(path, form, { onProgress, signal } = {}) {
       signal?.removeEventListener("abort", abort);
       reject(new ApiError("네트워크 문제로 업로드하지 못했습니다.", request.status || 0));
     };
+    request.ontimeout = () => {
+      signal?.removeEventListener('abort', abort);
+      reject(new ApiError('업로드 연결 시간이 초과되었습니다. 다시 시도해 주세요.', 408));
+    };
 
     request.onabort = () => {
       signal?.removeEventListener("abort", abort);
@@ -131,6 +150,7 @@ function uploadBlob(path, blob, { headers = {}, onProgress, signal } = {}) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", path);
+    request.timeout = 10 * 60 * 1000;
     request.withCredentials = true;
     for (const [key, value] of Object.entries(headers)) {
       request.setRequestHeader(key, value);
@@ -174,6 +194,10 @@ function uploadBlob(path, blob, { headers = {}, onProgress, signal } = {}) {
     request.onerror = () => {
       signal?.removeEventListener("abort", abort);
       reject(new ApiError("네트워크 문제로 업로드하지 못했습니다.", request.status || 0));
+    };
+    request.ontimeout = () => {
+      signal?.removeEventListener('abort', abort);
+      reject(new ApiError('업로드 연결 시간이 초과되었습니다. 다시 시도해 주세요.', 408));
     };
 
     request.onabort = () => {

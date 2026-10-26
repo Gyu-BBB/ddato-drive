@@ -101,6 +101,19 @@ export class ZipArchiveService {
   }
 
   async writeZipStream(writable, entries) {
+    const completion = finished(writable, { cleanup: true });
+    completion.catch(() => {});
+    try {
+      await this.writeZipContents(writable, entries);
+      await completion;
+    } catch (error) {
+      if (!writable.destroyed) writable.destroy(error);
+      await completion.catch(() => {});
+      throw error;
+    }
+  }
+
+  async writeZipContents(writable, entries) {
     let predictedOffset = 0;
     let predictedCentralSize = 0;
     for (const entry of entries) {
@@ -124,14 +137,15 @@ export class ZipArchiveService {
 
       let crcState = 0;
       let size = 0;
-      if (!entry.isDirectory) {
-        for await (const chunk of fs.createReadStream(entry.absolutePath)) {
+      if (!entry.isDirectory && entry.size > 0) {
+        for await (const chunk of fs.createReadStream(entry.absolutePath, { start: 0, end: entry.size - 1 })) {
           const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
           crcState = crc32(buffer, crcState);
           size += buffer.length;
           await write(buffer);
         }
       }
+      if (size !== entry.size) throw new Error('ZIP source changed during download. Please retry.');
 
       const crc = entry.isDirectory ? 0 : crcState;
       await write(dataDescriptor(crc, size, entryNeedsZip64({ ...entry, size })));
@@ -160,7 +174,6 @@ export class ZipArchiveService {
 
     await write(endOfCentralDirectory(centralEntries.length, centralSize, centralOffset, needsZip64));
     writable.end();
-    await finished(writable);
   }
 }
 

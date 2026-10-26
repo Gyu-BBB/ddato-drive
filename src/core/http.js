@@ -1,6 +1,8 @@
 import path from "node:path";
 import { config } from "./config.js";
 import { normalizeCrossPlatformFileName } from "./fileNames.js";
+import { pipeline } from 'node:stream/promises';
+import { parseByteRange } from './httpRange.js';
 
 export function jsonError(res, status, message, extra = {}) {
   res.status(status).json({
@@ -37,11 +39,11 @@ export function contentDisposition(disposition, fileName) {
   return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-export function sendFileStream(req, res, absolutePath, options = {}) {
+export async function sendFileStream(req, res, absolutePath, options = {}) {
   const fs = options.fs;
   const stat = fs.statSync(absolutePath);
   const total = stat.size;
-  const range = String(req.headers.range || "");
+  const range = req.method === 'HEAD' || req.headers['if-range'] ? null : parseByteRange(String(req.headers.range || ''), total);
   const contentType = options.contentType || "application/octet-stream";
   const disposition = contentDisposition(options.disposition || "attachment", options.fileName || path.basename(absolutePath));
 
@@ -49,25 +51,24 @@ export function sendFileStream(req, res, absolutePath, options = {}) {
   res.setHeader("Content-Type", contentType);
   res.setHeader("Content-Disposition", disposition);
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Cache-Control", options.cacheControl || "private, no-store");
+  res.setHeader("Cache-Control", `${options.cacheControl || 'private, no-store'}, no-transform`);
 
-  if (range.startsWith("bytes=")) {
-    const [rawStart, rawEnd] = range.replace("bytes=", "").split("-");
-    const start = rawStart ? Number(rawStart) : 0;
-    const end = rawEnd ? Number(rawEnd) : total - 1;
-
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end >= total || start > end) {
-      res.status(416).setHeader("Content-Range", `bytes */${total}`).end();
+  if (range) {
+    if (range.invalid) {
+      res.status(416).setHeader("Content-Range", `bytes */${total}`);
+      res.end();
       return;
     }
-
+    const { start, end } = range;
     res.status(206);
     res.setHeader("Content-Range", `bytes ${start}-${end}/${total}`);
     res.setHeader("Content-Length", end - start + 1);
-    fs.createReadStream(absolutePath, { start, end }).pipe(res);
+    if (req.method === 'HEAD') { res.end(); return; }
+    await pipeline(fs.createReadStream(absolutePath, { start, end }), res);
     return;
   }
 
   res.setHeader("Content-Length", total);
-  fs.createReadStream(absolutePath).pipe(res);
+  if (req.method === 'HEAD') { res.end(); return; }
+  await pipeline(fs.createReadStream(absolutePath), res);
 }

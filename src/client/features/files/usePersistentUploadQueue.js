@@ -4,6 +4,8 @@ import { filesApi } from "./filesApi.js";
 import { createSpeedMeter } from "../../shared/lib/transferProgress.js";
 import { formatPercent } from "../../shared/lib/formatPercent.js";
 import { getStoredUploads, removeStoredUpload, saveStoredUpload } from "./uploadQueueStore.js";
+import { retryTransfer } from '../../shared/lib/retryTransfer.js';
+import { createTransferSlots } from '../../shared/lib/transferSlots.js';
 
 const CHUNK_SIZE = 8 * 1024 * 1024;
 const MAX_CONCURRENT_UPLOADS = 10;
@@ -17,6 +19,9 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
   const pausedIdsRef = useRef(new Set());
   const canceledIdsRef = useRef(new Set());
   const onCompleteRef = useRef(onComplete);
+  const lifecycleRef = useRef(0);
+  const uploadSlotsRef = useRef(null);
+  if (!uploadSlotsRef.current) uploadSlotsRef.current = createTransferSlots(MAX_CONCURRENT_UPLOADS);
 
   useEffect(() => {
     if (!enabled) return;
@@ -32,6 +37,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
   useEffect(() => {
     if (!enabled || !accountId) return;
     let disposed = false;
+    setUploadItems(items => items.filter(item => item.accountId === accountId));
 
     getStoredUploads(accountId).then(async (storedItems) => {
       if (disposed) return;
@@ -44,7 +50,10 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
           return item;
         });
 
-      setUploadItems(activeItems);
+      for (const item of storedItems.filter(entry => entry.status === 'done' || entry.status === 'canceled')) {
+        void removeStoredUpload(item.id).catch(() => {});
+      }
+      setUploadItems(items => [...activeItems, ...items.filter(item => item.accountId === accountId && !activeItems.some(stored => stored.id === item.id))]);
       await Promise.all(activeItems.map((item) => saveStoredUpload(item)));
       for (const item of activeItems.filter((entry) => RESUMABLE_STATUSES.has(entry.status))) {
         startUpload(item);
@@ -62,6 +71,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
 
     return () => {
       disposed = true;
+      lifecycleRef.current += 1;
       for (const controller of controllersRef.current.values()) {
         controller.abort();
       }
@@ -93,21 +103,9 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       updatedAt: Date.now()
     };
 
-    try {
-      await saveStoredUpload(item);
-      addVisibleItem(item);
-      startUpload(item);
-      return item;
-    } catch (error) {
-      addVisibleItem({
-        ...item,
-        file: null,
-        status: "failed",
-        detail: "저장 실패",
-        error: error.message || "새로고침 복구용 업로드 저장소에 파일을 저장하지 못했습니다."
-      });
-      return null;
-    }
+    addVisibleItem(item);
+    startUpload(item);
+    return item;
   }
 
   function addTransientUpload(item) {
@@ -130,7 +128,11 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       controller.abort();
       return;
     }
-    updateStoredAndVisible(id, { status: "paused", detail: "일시정지됨", error: "" });
+    if (getVisibleItem(id)?.serverSessionId) {
+      void updateStoredAndVisible(id, { status: "paused", detail: "일시정지됨", error: "" });
+    } else {
+      updateVisibleOnly(id, { status: "paused", detail: "일시정지됨", error: "" });
+    }
   }
 
   function resumeUpload(id) {
@@ -140,9 +142,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
     canceledIdsRef.current.delete(id);
     const next = { ...item, status: "queued", detail: "재개 대기", error: "", updatedAt: Date.now() };
     addVisibleItem(next);
-    saveStoredUpload(stripRuntimeOnly(next)).then(() => startUpload(next)).catch((error) => {
-      updateVisibleOnly(id, { status: "failed", detail: "저장 실패", error: error.message || "업로드 상태를 저장하지 못했습니다." });
-    });
+    startUpload(next);
   }
 
   function cancelUpload(id) {
@@ -182,56 +182,84 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
 
   async function startUpload(initialItem) {
     if (!enabled || !initialItem || initialItem.transient || controllersRef.current.has(initialItem.id)) return;
-    if (!getVisibleItem(initialItem.id) || controllersRef.current.size >= MAX_CONCURRENT_UPLOADS) return;
+    if (initialItem.accountId !== accountId || getVisibleItem(initialItem.id)?.status !== 'queued'
+      || pausedIdsRef.current.has(initialItem.id) || canceledIdsRef.current.has(initialItem.id)) return;
     const controller = new AbortController();
+    const lifecycle = lifecycleRef.current;
     controllersRef.current.set(initialItem.id, controller);
     pausedIdsRef.current.delete(initialItem.id);
     canceledIdsRef.current.delete(initialItem.id);
 
     let item = { ...initialItem };
+    let persisted = Boolean(initialItem.serverSessionId);
+    let releaseSlot;
+    const retryOptions = { signal: controller.signal, onRetry: attempt => {
+      if (lifecycle === lifecycleRef.current) updateVisibleOnly(item.id, { detail: `연결 재시도 ${attempt}/3`, speedBytes: 0 });
+    } };
     try {
       if (!item.file) {
         throw new ApiError("저장된 파일을 읽지 못했습니다. 파일을 다시 선택해주세요.", 0);
       }
 
-      item = await updateStoredAndVisible(item.id, { status: "uploading", detail: "업로드 준비 중", error: "" }) || item;
-      const session = await prepareSession(item, controller.signal);
+      updateVisibleOnly(item.id, { status: "uploading", detail: "저장 공간 확인 중", error: "" });
+      throwIfAborted(controller.signal);
+      // Reserve server capacity before cloning the original file into IndexedDB.
+      const session = await retryTransfer(() => prepareSession(item, controller.signal), retryOptions);
+      item = { ...item, serverSessionId: session.id };
+      if (controller.signal.aborted) throw new DOMException('Upload interrupted', 'AbortError');
       item = await updateStoredAndVisible(item.id, {
+        status: "queued",
         serverSessionId: session.id,
         uploadedBytes: session.uploadedBytes,
         progress: session.progress,
         detail: session.uploadedBytes ? `${formatPercent(session.progress)}부터 재개` : "업로드 중"
       }) || item;
+      persisted = true;
+      throwIfAborted(controller.signal);
+      releaseSlot = await uploadSlotsRef.current(controller.signal);
+      item = await updateStoredAndVisible(item.id, { status: 'uploading', detail: '업로드 중' }) || item;
+      throwIfAborted(controller.signal);
 
       let uploadedBytes = session.uploadedBytes;
       const initialBytes = uploadedBytes;
       const speedMeter = createSpeedMeter();
-      const chunkSize = Math.max(1, Math.min(Number(session.chunkSizeBytes) || CHUNK_SIZE, 32 * 1024 * 1024));
+      let chunkSize = Math.max(1, Math.min(Number(session.chunkSizeBytes) || CHUNK_SIZE, 32 * 1024 * 1024));
       let lastProgressAt = 0;
       while (uploadedBytes < item.sizeBytes) {
         throwIfAborted(controller.signal);
-        const end = Math.min(uploadedBytes + chunkSize, item.sizeBytes);
-        const chunk = item.file.slice(uploadedBytes, end);
-        const baseOffset = uploadedBytes;
-        const result = await filesApi.uploadSessionChunk(session.id, {
-          chunk,
-          offset: uploadedBytes,
-          signal: controller.signal,
-          onProgress: (loaded) => {
-            const now = performance.now();
-            if (now - lastProgressAt < 200 && loaded < chunk.size) return;
-            lastProgressAt = now;
-            const optimisticBytes = Math.min(item.sizeBytes, baseOffset + loaded);
-            const progress = item.sizeBytes ? (optimisticBytes / item.sizeBytes) * 100 : 100;
-            updateVisibleOnly(item.id, {
-              uploadedBytes: optimisticBytes,
-              speedBytes: speedMeter(optimisticBytes - initialBytes),
-              speedUpdatedAt: Date.now(),
-              progress,
-              detail: formatPercent(progress)
-            });
+        const result = await retryTransfer(async attempt => {
+          if (attempt) {
+            const status = await filesApi.getUploadSession(session.id, { signal: controller.signal });
+            uploadedBytes = status.session.uploadedBytes;
+            if (uploadedBytes === item.sizeBytes) return status;
           }
-        });
+          const baseOffset = uploadedBytes;
+          const end = Math.min(baseOffset + chunkSize, item.sizeBytes);
+          const chunk = item.file.slice(baseOffset, end);
+          return filesApi.uploadSessionChunk(session.id, {
+            chunk,
+            offset: uploadedBytes,
+            signal: controller.signal,
+            onProgress: (loaded) => {
+              if (lifecycle !== lifecycleRef.current || controller.signal.aborted) return;
+              const now = performance.now();
+              if (now - lastProgressAt < 200 && loaded < chunk.size) return;
+              lastProgressAt = now;
+              const optimisticBytes = Math.min(item.sizeBytes, baseOffset + loaded);
+              const progress = item.sizeBytes ? (optimisticBytes / item.sizeBytes) * 100 : 100;
+              updateVisibleOnly(item.id, {
+                uploadedBytes: optimisticBytes,
+                speedBytes: speedMeter(optimisticBytes - initialBytes),
+                speedUpdatedAt: Date.now(),
+                progress,
+                detail: formatPercent(progress)
+              });
+            }
+          });
+        }, { ...retryOptions, onRetry: attempt => {
+          chunkSize = Math.max(Math.min(64 * 1024, chunkSize), Math.floor(chunkSize / 2));
+          retryOptions.onRetry(attempt);
+        } });
 
         uploadedBytes = result.session.uploadedBytes;
         updateVisibleOnly(item.id, {
@@ -241,14 +269,35 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
         });
       }
 
-      const completed = await filesApi.completeUploadSession(session.id, { signal: controller.signal });
-      controllersRef.current.delete(item.id);
-      await removeStoredUpload(item.id);
-      updateVisibleOnly(item.id, { status: "done", progress: 100, detail: "업로드됨", error: "", fileId: completed.file?.id || "" });
-      await onCompleteRef.current?.();
+      const completed = await retryTransfer(() => filesApi.completeUploadSession(session.id, { signal: controller.signal }), retryOptions);
+      if (lifecycle !== lifecycleRef.current) return;
+      if (controllersRef.current.get(item.id) === controller) controllersRef.current.delete(item.id);
+      updateVisibleOnly(item.id, { status: "done", uploadedBytes: item.sizeBytes, speedBytes: 0, progress: 100, detail: "업로드됨", error: "", fileId: completed.file?.id || "" });
+      await removeStoredUpload(item.id).catch(() => saveStoredUpload({ ...stripRuntimeOnly(item), status: 'done' }).catch(() => {}));
+      // A failed list refresh must not turn a committed upload into a failed transfer.
+      try { await onCompleteRef.current?.(); } catch (refreshError) { console.warn('업로드는 완료되었지만 목록을 새로고침하지 못했습니다.', refreshError); }
     } catch (error) {
-      controllersRef.current.delete(initialItem.id);
-      await handleUploadError(initialItem.id, error);
+      if (!persisted) {
+        // Also cancel by client ID when a session response was lost.
+        await filesApi.cancelUploadByClientId(item.id).catch(() => {});
+        await removeStoredUpload(item.id).catch(() => {});
+        item = { ...item, serverSessionId: "" };
+        // Cancellation IDs cannot be reused when the user retries admission.
+        if (!canceledIdsRef.current.has(item.id)) {
+          const replacement = { ...item, id: createUploadId(), status: pausedIdsRef.current.has(item.id) ? 'paused' : 'failed',
+            detail: pausedIdsRef.current.has(item.id) ? '일시정지됨' : '실패', error: pausedIdsRef.current.has(item.id) ? '' : error.message || '업로드를 준비하지 못했습니다.' };
+          if (lifecycle === lifecycleRef.current) {
+            setUploadItems(items => items.map(entry => entry.id === item.id ? replacement : entry));
+          }
+          pausedIdsRef.current.delete(item.id);
+        }
+      }
+      if (controllersRef.current.get(initialItem.id) === controller) controllersRef.current.delete(initialItem.id);
+      if (lifecycle !== lifecycleRef.current) return;
+      if (!persisted && !canceledIdsRef.current.has(item.id)) return;
+      await handleUploadError(initialItem.id, error, item);
+    } finally {
+      releaseSlot?.();
     }
   }
 
@@ -267,13 +316,14 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       parentId: item.parentId,
       name: item.name,
       sizeBytes: item.sizeBytes,
-      mimeType: item.mimeType
+      mimeType: item.mimeType,
+      clientUploadId: item.id
     }, { signal });
     return result.session;
   }
 
-  async function handleUploadError(id, error) {
-    const item = getVisibleItem(id);
+  async function handleUploadError(id, error, fallbackItem) {
+    const item = getVisibleItem(id) || fallbackItem;
     if (canceledIdsRef.current.has(id)) {
       canceledIdsRef.current.delete(id);
       pausedIdsRef.current.delete(id);
@@ -295,12 +345,17 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
     if (!item) return;
     setUploadItems((items) => items.filter((entry) => entry.id !== item.id));
     try {
-      if (item.serverSessionId) await filesApi.cancelUploadSession(item.serverSessionId);
+      const result = item.serverSessionId ? await filesApi.cancelUploadSession(item.serverSessionId) : await filesApi.cancelUploadByClientId(item.id);
+      if (result.completed) { try { await onCompleteRef.current?.(); } catch {} }
     } catch {
       // Local cancellation should still remove the persisted upload.
     }
     await removeStoredUpload(item.id).catch(() => {});
     setUploadItems((items) => items.filter((entry) => entry.id !== item.id));
+    if (!controllersRef.current.has(item.id)) {
+      canceledIdsRef.current.delete(item.id);
+      pausedIdsRef.current.delete(item.id);
+    }
   }
 
   function addVisibleItem(item) {

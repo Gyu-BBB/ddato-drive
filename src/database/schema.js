@@ -51,6 +51,28 @@ export function initializeSchema(db) {
 
     CREATE INDEX IF NOT EXISTS files_parent_idx ON files(parent_id);
 
+    CREATE TABLE IF NOT EXISTS upload_completions (
+      session_id TEXT PRIMARY KEY,
+      request_user_id TEXT NOT NULL,
+      client_upload_id TEXT,
+      file_id TEXT,
+      metadata_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (request_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS upload_completion_client_idx
+      ON upload_completions(request_user_id, client_upload_id) WHERE client_upload_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS upload_completion_expiry_idx ON upload_completions(created_at);
+    CREATE TABLE IF NOT EXISTS upload_cancellations (
+      request_user_id TEXT NOT NULL,
+      client_upload_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (request_user_id, client_upload_id),
+      FOREIGN KEY (request_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS upload_cancellation_expiry_idx ON upload_cancellations(created_at);
+
     CREATE INDEX IF NOT EXISTS files_owner_folder_idx ON files(owner_id)
       WHERE type = 'folder';
 
