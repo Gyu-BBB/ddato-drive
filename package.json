@@ -25,7 +25,8 @@
     "test:resources": "node --disable-warning=ExperimentalWarning scripts/server-resource-test.js",
     "test:navigation": "npm run build && node scripts/navigation-test.js && node scripts/navigation-browser-test.js",
     "test:media-layout": "npm run build && node scripts/media-layout-browser-test.js",
-    "test:thumbnails": "npm run build && node scripts/thumbnail-browser-test.js"
+    "test:thumbnails": "npm run build && node scripts/thumbnail-browser-test.js",
+    "test:image-fill": "npm run build && node scripts/image-fill-test.js && node scripts/image-fill-browser-test.js"
   },
   "dependencies": {
     "express": "^5.2.1",
@@ -33,6 +34,7 @@
     "multer": "^2.1.1",
     "onnxruntime-web": "1.21.0",
     "pdfjs-dist": "6.4.299",
+    "q-floodfill": "1.3.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-image-crop": "^11.1.2",

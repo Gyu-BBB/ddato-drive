@@ -244,7 +244,7 @@ try {
       await page.waitForFunction(() => document.querySelector('.image-editor canvas').getContext('2d').getImageData(160, 1280, 1, 1).data[0] === 200);
       await editor.getByRole('button', { name: '다시 실행', exact: true }).click();
       await editor.getByLabel('펜 굵기').fill('12');
-      await editor.getByRole('button', { name: '펜 색상 #007aff', exact: true }).click();
+      await editor.getByRole('button', { name: '색상 #007aff', exact: true }).click();
       await page.mouse.move(rect.x + rect.width * 0.25, rect.y + rect.height * 0.25);
       await page.mouse.down();
       await page.mouse.move(rect.x + rect.width * 0.75, rect.y + rect.height * 0.3, { steps: 12 });

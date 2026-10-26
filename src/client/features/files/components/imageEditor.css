@@ -11,13 +11,16 @@
 .image-editor-header > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--dd-muted); font-size: 12px; }
 .image-editor-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; }
 .image-editor-tools [aria-pressed="true"] { color: var(--dd-primary); background: var(--dd-surface-raised); border-color: var(--dd-primary); }
-.image-editor-options { min-height: 46px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0 14px 10px; }
+.image-editor-options { height: 56px; min-height: 56px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0 14px 10px; }
 .image-editor-colors { display: flex; gap: 6px; }
 .image-editor-colors button { width: 24px; height: 24px; padding: 0; border: 1px solid #888; border-radius: 50%; }
 .image-editor-colors button[aria-pressed="true"] { outline: 2px solid var(--dd-primary); outline-offset: 2px; }
+.image-editor-colors input[type="color"] { width: 26px; height: 26px; padding: 1px; border: 1px solid var(--dd-border); border-radius: 4px; background: transparent; cursor: pointer; }
 .image-editor-width { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.image-editor-width input { width: 90px; }
+.image-editor-width input { width: 72px; }
 .image-editor-width output { min-width: 2ch; }
+.image-editor-opacity input { width: 72px; }
+.image-editor-opacity output { min-width: 4ch; }
 .image-editor-dimensions { margin-left: auto; color: var(--dd-muted); font-size: 12px; }
 .image-editor-stage { flex: 1; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #19191b; }
 .image-editor-stage { position: relative; }
@@ -44,7 +47,9 @@
   .modal-backdrop.image-editor-backdrop { padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); }
   .image-editor { height: calc(100dvh - 16px - env(safe-area-inset-bottom)); }
   .image-editor-header, .image-editor-tools, .image-editor-footer { padding: 8px; }
-  .image-editor-options { padding: 0 8px 8px; gap: 10px; }
+  .image-editor-options { position: relative; height: 76px; min-height: 76px; padding: 0 8px 8px; align-content: start; gap: 8px 10px; }
+  .image-editor-options .image-editor-dimensions { position: absolute; top: 4px; right: 8px; }
+  .image-editor-opacity input { width: 56px; }
   .image-editor-tools { gap: 4px; }
   .image-editor-footer { flex-wrap: wrap; }
   .image-editor-footer label { flex-basis: 100%; }
@@ -57,5 +62,5 @@
   .image-editor-header, .image-editor-tools { padding-top: 4px; padding-bottom: 4px; }
 }
 @media (max-width: 480px) {
-  .image-editor-tools { display: grid; grid-template-columns: repeat(5, 36px); gap: 4px 8px; }
+  .image-editor-tools { display: grid; grid-template-columns: repeat(6, 36px); gap: 4px 8px; }
 }

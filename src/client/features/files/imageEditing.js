@@ -9,6 +9,11 @@ export function renderImageEdits(target, source, operations) {
   let context = target.getContext('2d', { willReadFrequently: true });
   context.drawImage(source, 0, 0);
   for (const [index, operation] of operations.entries()) {
+    if (operation.type === 'fill') {
+      context.clearRect(operation.x, operation.y, operation.patch.width, operation.patch.height);
+      context.drawImage(operation.patch, operation.x, operation.y);
+      continue;
+    }
     if (operation.type === 'pen') {
       paintStroke(context, operation);
       continue;
