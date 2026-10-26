@@ -17,6 +17,7 @@ import { useMediaFileActions } from './useMediaFileActions.js';
 import { useAuth } from '../auth/AuthProvider.jsx';
 import { ImageEditor } from './components/ImageEditor.jsx';
 import { ZoomableImage } from './components/ImageZoom.jsx';
+import { MediaThumbnail } from './components/MediaThumbnail.jsx';
 
 const kindOptions = [
   { id: "", label: "전체", icon: Film },
@@ -280,14 +281,7 @@ function handleMediaGridWheel(event) {
 
 function MediaThumb({ file }) {
   if (isLocked(file)) return <span className="media-locked-thumb" aria-label="잠금 파일"><LockKeyhole size={26} /></span>;
-  const src = filesApi.previewUrl(file.id);
-  if (isImageFile(file)) return <img src={src} alt="" loading="lazy" />;
-  return (
-    <span className="media-video-thumb">
-      <video src={src} muted preload="metadata" playsInline />
-      <Video size={22} />
-    </span>
-  );
+  return <MediaThumbnail file={file} size="100%" fallback={isImageFile(file) ? <ImageIcon size={26} /> : <Video size={26} />} />;
 }
 
 function isLocked(file) {

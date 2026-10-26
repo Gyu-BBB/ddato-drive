@@ -8,6 +8,7 @@ import { FullPreviewDialog } from "./FullPreviewDialog.jsx";
 import { fileKind, fileLocation, sortFiles } from "../fileDisplay.js";
 import { filesApi } from "../filesApi.js";
 import { FolderGlyph } from "./FolderGlyph.jsx";
+import { MediaThumbnail } from './MediaThumbnail.jsx';
 
 const MAX_COLUMN_DEPTH = 3;
 
@@ -457,7 +458,7 @@ function FileIconWithBadge({ file, size = 20 }) {
   const label = file.passwordUnlocked ? "2차 암호 해제됨" : "2차 암호 잠김";
   return (
     <span className={locked ? "file-icon-lock-wrap locked" : "file-icon-lock-wrap"} title={locked ? label : undefined}>
-      <FileIcon file={file} size={size} />
+      <MediaThumbnail file={file} size={size === 42 ? 50 : size} fallback={<FileIcon file={file} size={size} />} />
       {locked ? (
         <span className="file-lock-badge" aria-label={label}>
           <LockKeyhole size={10} strokeWidth={2.6} />

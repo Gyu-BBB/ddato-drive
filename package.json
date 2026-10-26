@@ -24,7 +24,8 @@
     "test:drag-move": "node scripts/drag-move-test.js",
     "test:resources": "node --disable-warning=ExperimentalWarning scripts/server-resource-test.js",
     "test:navigation": "npm run build && node scripts/navigation-test.js && node scripts/navigation-browser-test.js",
-    "test:media-layout": "npm run build && node scripts/media-layout-browser-test.js"
+    "test:media-layout": "npm run build && node scripts/media-layout-browser-test.js",
+    "test:thumbnails": "npm run build && node scripts/thumbnail-browser-test.js"
   },
   "dependencies": {
     "express": "^5.2.1",
