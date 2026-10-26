@@ -77,6 +77,12 @@ try {
     ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:sz w:val="48"/><w:color w:val="245AD0"/></w:rPr><w:t>Actual Word document</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>']
   ]));
   const protectedPdf = await upload('protected.pdf', 'application/pdf', thumbnailPdf());
+  const archives = [];
+  for (const [name, mime] of [['sample.ZIP', 'application/zip'], ['sample.tar.gz', 'application/gzip'],
+    ['sample.7z', 'application/x-7z-compressed'], ['sample.rar', 'application/vnd.rar'],
+    ['no-extension', 'application/x-tar'], ['text-mime.zip', 'text/plain']]) {
+    archives.push(await upload(name, mime, Buffer.from('archive icon fixture')));
+  }
   assert((await api.put(`${base}/api/files/${protectedPdf.id}/password`, { headers, data: { password: 'test-only' } })).ok());
   assert((await api.put(`${base}/api/files/${locked.id}/password`, { headers, data: { password: 'test-only' } })).ok());
   const shots = path.resolve('.tmp/thumbnail-screenshots');
@@ -116,6 +122,13 @@ try {
       }
       assert.equal(await page.locator(`[data-file-id="${locked.id}"] .media-thumbnail`).count(), 0);
       assert.equal(await page.locator(`[data-file-id="${protectedPdf.id}"] .media-thumbnail`).count(), 0);
+      for (const archive of archives) {
+        const item = page.locator(`[data-file-id="${archive.id}"]`).first();
+        await item.scrollIntoViewIfNeeded();
+        assert.equal(await item.locator('svg[aria-label="압축 파일"]').count(), 1, `${mode}: ${archive.name} must use the archive icon`);
+        assert.equal(await item.locator('.document-thumbnail').count(), 0, 'archives must not use document thumbnails');
+      }
+      assert.equal(await page.locator(`[data-file-id="${word.id}"] svg[aria-label="압축 파일"]`).count(), 0, 'ZIP-based Office documents must remain documents');
       await page.locator(`[data-file-id="${broken.id}"] .media-thumbnail svg`).first().waitFor();
       await page.screenshot({ path: path.join(shots, `${width}-${mode}.png`) });
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -128,6 +141,7 @@ try {
   }
   assert(!previewRequests.some(url => url.includes(locked.id)), 'locked thumbnails must never request protected content');
   assert(!previewRequests.some(url => url.includes(protectedPdf.id)), 'locked documents must never request protected content');
+  assert(!previewRequests.some(url => archives.some(file => url.includes(file.id))), 'displaying archive icons must not fetch archive contents');
   assert.deepEqual(errors, []);
   console.log('Thumbnail browser tests passed: image/video/PDF/text/spreadsheet/office-text in all four views, desktop/mobile, locked privacy, actual rendered pixels, corrupt-file fallback, released video decoders and no horizontal overflow.');
 } finally {

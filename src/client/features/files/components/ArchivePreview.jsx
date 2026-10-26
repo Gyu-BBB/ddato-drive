@@ -1,4 +1,5 @@
-import { ArrowLeft, File, Home, LockKeyhole, Search } from 'lucide-react';
+import { ArrowLeft, File, FileArchive, Home, LockKeyhole, Search } from 'lucide-react';
+import { isArchiveName } from '../../../../shared/archiveFormats.js';
 import { useMemo, useState } from 'react';
 import { formatBytes } from '../../../shared/lib/formatBytes.js';
 import { FolderGlyph } from './FolderGlyph.jsx';
@@ -38,7 +39,7 @@ export function ArchivePreview({ archive }) {
       <div className="zip-preview-list">
         {!rows.length ? <p className="muted">표시할 항목이 없습니다.</p> : null}
         {rows.slice(0, limit).map((entry, index) => <div className="zip-preview-row" key={`${entry.path}-${index}`}>
-          {entry.directory ? <FolderGlyph size={20} color="yellow" /> : <File size={19} />}
+          {entry.directory ? <FolderGlyph size={20} color="yellow" /> : isArchiveName(entry.path) ? <FileArchive size={19} aria-label="압축 파일" /> : <File size={19} />}
           <div className="zip-preview-name">
             {entry.directory ? <button type="button" onClick={() => navigate(entry.path.endsWith('/') ? entry.path : entry.path + '/')}>{entry.path.replace(/\/$/, '').split('/').at(-1)}</button> : <strong>{entry.path.split('/').at(-1)}</strong>}
             {query ? <small>{entry.path}</small> : null}

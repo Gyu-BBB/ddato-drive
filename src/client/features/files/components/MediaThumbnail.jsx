@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
-import { isDocumentFile, isImageFile, isPdfFile, isSpreadsheetFile, isTextFile, isVideoFile } from './FilePreview.jsx';
+import { isArchiveFile, isDocumentFile, isImageFile, isPdfFile, isSpreadsheetFile, isTextFile, isVideoFile } from './FilePreview.jsx';
 import { DocumentThumbnail } from './DocumentThumbnail.jsx';
 import { filesApi } from '../filesApi.js';
 import './mediaThumbnail.css';
@@ -18,7 +18,7 @@ function drain() {
 
 export function MediaThumbnail({ file, fallback, size = 40 }) {
   const locked = file.passwordProtected && !file.passwordUnlocked;
-  if (file.type === 'folder' || locked) return fallback;
+  if (file.type === 'folder' || locked || isArchiveFile(file)) return fallback;
   const key = `${file.id}:${file.updatedAt}:${Boolean(file.passwordUnlocked)}`;
   if (isPdfFile(file) || isSpreadsheetFile(file) || isDocumentFile(file) || isTextFile(file)) {
     return <DocumentThumbnail key={key} file={file} fallback={fallback} size={size} />;

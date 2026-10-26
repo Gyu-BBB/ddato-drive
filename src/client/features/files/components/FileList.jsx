@@ -1,9 +1,9 @@
-import { File, FileAudio, FileText, FileVideo, Image, LockKeyhole, Maximize2 } from "lucide-react";
+import { File, FileArchive, FileAudio, FileText, FileVideo, Image, LockKeyhole, Maximize2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDate } from "../../../shared/lib/dates.js";
 import { formatBytes } from "../../../shared/lib/formatBytes.js";
 import { IconButton } from "../../../shared/components/IconButton.jsx";
-import { canInlinePreview, FilePreviewContent, isAudioFile, isDocumentFile, isImageFile, isPdfFile, isSpreadsheetFile, isTextFile, isVideoFile, useFilePreview } from "./FilePreview.jsx";
+import { canInlinePreview, FilePreviewContent, isArchiveFile, isAudioFile, isDocumentFile, isImageFile, isPdfFile, isSpreadsheetFile, isTextFile, isVideoFile, useFilePreview } from "./FilePreview.jsx";
 import { FullPreviewDialog } from "./FullPreviewDialog.jsx";
 import { fileKind, fileLocation, sortFiles } from "../fileDisplay.js";
 import { filesApi } from "../filesApi.js";
@@ -446,6 +446,7 @@ function GalleryStage({ file, onUnlock }) {
 
 function FileIcon({ file, size = 20 }) {
   if (file.type === "folder") return <FolderGlyph color={file.folderColor} size={size} />;
+  if (isArchiveFile(file)) return <FileArchive size={size} aria-label="압축 파일" />;
   if (isImageFile(file)) return <Image size={size} />;
   if (isVideoFile(file)) return <FileVideo size={size} />;
   if (isAudioFile(file)) return <FileAudio size={size} />;

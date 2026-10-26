@@ -1,4 +1,4 @@
-import { File, FileAudio, FileText, FileVideo, Image } from "lucide-react";
+import { File, FileArchive, FileAudio, FileText, FileVideo, Image } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FolderGlyph } from "./FolderGlyph.jsx";
 import { ArchivePreview } from './ArchivePreview.jsx';
@@ -222,6 +222,7 @@ function shouldPollDocumentPreview(file) {
 
 function PreviewIcon({ file, size = 20 }) {
   if (file?.type === "folder") return <FolderGlyph color={file.folderColor} size={size} />;
+  if (isArchiveFile(file)) return <FileArchive size={size} aria-label="압축 파일" />;
   if (isImageFile(file)) return <Image size={size} />;
   if (isVideoFile(file)) return <FileVideo size={size} />;
   if (isAudioFile(file)) return <FileAudio size={size} />;
