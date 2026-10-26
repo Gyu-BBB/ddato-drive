@@ -1,4 +1,4 @@
-import { Check, Crop, Eraser, Hand, Info, Loader2, Pencil, Redo2, RotateCcw, RotateCw, Save, Undo2, X } from 'lucide-react';
+import { Brush, Check, Crop, Eraser, Hand, Info, Loader2, Pencil, Redo2, RotateCcw, RotateCw, Save, Undo2, WandSparkles, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactCrop from 'react-image-crop';
@@ -10,6 +10,7 @@ import { canvasPng, editedImageName, MAX_EDIT_PIXELS, paintStroke, renderImageEd
 import { removeImageBackground } from '../backgroundRemoval/backgroundRemoval.js';
 import { BACKGROUND_ASSET_PATH, MODEL_INPUT_SIZE } from '../backgroundRemoval/config.js';
 import { ImageZoom, ZOOM_TOOLBAR_HEIGHT } from './ImageZoom.jsx';
+import { imageGeometry, paintImageBrush } from '../imageBrushes.js';
 
 const initialCrop = () => ({ unit: '%', x: 10, y: 10, width: 80, height: 80 });
 const colors = ['#ff3b30', '#ffcc00', '#34c759', '#007aff', '#ffffff', '#000000'];
@@ -19,6 +20,8 @@ export function ImageEditor({ file, onClose, onSaved }) {
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
   const strokeRef = useRef(null);
+  const brushCursorRef = useRef(null);
+  const restoreTransformRef = useRef(null);
   const removalRef = useRef(null);
   const masksRef = useRef(new Set());
   const [source, setSource] = useState(null);
@@ -27,6 +30,7 @@ export function ImageEditor({ file, onClose, onSaved }) {
   const [crop, setCrop] = useState(initialCrop);
   const [color, setColor] = useState(colors[0]);
   const [penWidth, setPenWidth] = useState(5);
+  const [brushWidth, setBrushWidth] = useState(24);
   const [name, setName] = useState(editedImageName(file.name));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -121,21 +125,40 @@ export function ImageEditor({ file, onClose, onSaved }) {
   }
 
   function startStroke(event) {
-    if (tool !== 'pen' || !source || saving || removalRef.current || event.button !== 0 || strokeRef.current) return;
+    if (!['pen', 'erase', 'restore'].includes(tool) || !source || saving || removalRef.current || event.button !== 0 || strokeRef.current) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    strokeRef.current = { type: 'pen', color, width: penWidth * dimensions.width / displayWidth, points: [point(event)], pointerId: event.pointerId };
-    paintStroke(canvasRef.current.getContext('2d'), strokeRef.current);
+    const width = tool === 'pen' ? penWidth * dimensions.width / displayWidth : brushWidth * dimensions.width / canvasRef.current.getBoundingClientRect().width;
+    restoreTransformRef.current = tool === 'restore' ? imageGeometry(source, history.past).transform : null;
+    strokeRef.current = { type: tool, color, width, points: [point(event)], pointerId: event.pointerId };
+    paintLiveStroke(strokeRef.current);
   }
 
   function moveStroke(event) {
+    updateBrushCursor(event);
     const stroke = strokeRef.current;
     if (!stroke || stroke.pointerId !== event.pointerId) return;
     const next = point(event);
     const previous = stroke.points.at(-1);
     if (Math.hypot(next.x - previous.x, next.y - previous.y) < 0.5) return;
     stroke.points.push(next);
-    paintStroke(canvasRef.current.getContext('2d'), { ...stroke, points: [previous, next] });
+    paintLiveStroke({ ...stroke, points: [previous, next] });
+  }
+
+  function paintLiveStroke(stroke) {
+    const context = canvasRef.current.getContext('2d');
+    if (stroke.type === 'pen') paintStroke(context, stroke);
+    else paintImageBrush(context, stroke, source, restoreTransformRef.current);
+  }
+
+  function updateBrushCursor(event) {
+    const cursor = brushCursorRef.current;
+    if (!cursor) return;
+    if (!['erase', 'restore'].includes(tool) || event.pointerType === 'touch') { cursor.hidden = true; return; }
+    const stage = stageRef.current.getBoundingClientRect();
+    cursor.hidden = false;
+    cursor.style.width = cursor.style.height = `${brushWidth}px`;
+    cursor.style.transform = `translate(${event.clientX - stage.left - brushWidth / 2}px, ${event.clientY - stage.top - brushWidth / 2}px)`;
   }
 
   function endStroke(event) {
@@ -224,8 +247,10 @@ export function ImageEditor({ file, onClose, onSaved }) {
       <div className="image-editor-tools" role="toolbar" aria-label="이미지 편집 도구">
         <Button icon={Crop} iconOnly aria-pressed={tool === 'crop'} disabled={disabled} onClick={() => setTool('crop')}>자르기</Button>
         <Button icon={Pencil} iconOnly aria-pressed={tool === 'pen'} disabled={disabled} onClick={() => setTool('pen')}>펜</Button>
+        <Button icon={Eraser} iconOnly aria-pressed={tool === 'erase'} disabled={disabled} onClick={() => setTool('erase')}>지우개</Button>
+        <Button icon={Brush} iconOnly aria-pressed={tool === 'restore'} disabled={disabled} title="편집 시작 원본으로 복원" onClick={() => setTool('restore')}>복원 브러시</Button>
         <Button icon={Hand} iconOnly aria-pressed={tool === 'pan'} disabled={disabled} onClick={() => setTool('pan')}>이동</Button>
-        <Button icon={Eraser} iconOnly disabled={disabled} onClick={removeBackground}>배경 제거</Button>
+        <Button icon={WandSparkles} iconOnly disabled={disabled} onClick={removeBackground}>배경 제거</Button>
         <Button icon={RotateCcw} iconOnly disabled={disabled} onClick={() => commit({ type: 'rotate', direction: -1 })}>왼쪽으로 회전</Button>
         <Button icon={RotateCw} iconOnly disabled={disabled} onClick={() => commit({ type: 'rotate', direction: 1 })}>오른쪽으로 회전</Button>
         <Button icon={Undo2} iconOnly disabled={disabled || !history.past.length} onClick={() => { setHistory(current => ({ past: current.past.slice(0, -1), future: [current.past.at(-1), ...current.future] })); setCrop(initialCrop()); }}>되돌리기</Button>
@@ -237,7 +262,8 @@ export function ImageEditor({ file, onClose, onSaved }) {
             {colors.map(value => <button key={value} type="button" title={value} aria-label={`펜 색상 ${value}`} aria-pressed={color === value} disabled={disabled} style={{ backgroundColor: value }} onClick={() => setColor(value)} />)}
           </div>
           <label className="image-editor-width">굵기 <input aria-label="펜 굵기" type="range" min="1" max="24" value={penWidth} disabled={disabled} onChange={event => setPenWidth(Number(event.target.value))} /><output>{penWidth}</output></label>
-        </> : tool === 'crop' ? <Button icon={Check} disabled={disabled || !crop?.width || !crop?.height} onClick={applyCrop}>자르기 적용</Button> : null}
+        </> : ['erase', 'restore'].includes(tool) ? <label className="image-editor-width">크기 <input aria-label="브러시 크기" type="range" min="1" max="160" value={brushWidth} disabled={disabled} onChange={event => setBrushWidth(Number(event.target.value))} /><output>{brushWidth}</output></label>
+          : tool === 'crop' ? <Button icon={Check} disabled={disabled || !crop?.width || !crop?.height} onClick={applyCrop}>자르기 적용</Button> : null}
         <span className="image-editor-dimensions">{source ? `${dimensions.width} × ${dimensions.height}` : ''}</span>
       </div>
       {error ? <div className="error-banner" role="alert">{error}</div> : null}
@@ -246,7 +272,8 @@ export function ImageEditor({ file, onClose, onSaved }) {
         <span>{removing === 'loading' ? '배경 제거 모델 불러오는 중' : '배경 제거 중'}</span>
         <Button icon={X} iconOnly onClick={() => removalRef.current?.abort()}>배경 제거 취소</Button>
       </div> : null}
-      <div ref={stageRef} className={`image-editor-stage ${tool === 'pen' ? 'pen-mode' : ''}`}>
+      <div ref={stageRef} className={`image-editor-stage ${['pen', 'erase', 'restore'].includes(tool) ? 'pen-mode' : ''}`} onPointerLeave={() => { if (brushCursorRef.current) brushCursorRef.current.hidden = true; }}>
+        <div ref={brushCursorRef} className="image-editor-brush-cursor" hidden aria-hidden="true" />
         {!source && !error ? <Loader2 className="upload-spinner" aria-label="이미지 불러오는 중" /> : null}
         <ImageZoom baseScale={scale} resetKey={`${dimensions.width}:${dimensions.height}`} disabled={disabled} pan={tool === 'pan'} onGestureStart={cancelStroke}>
         <ReactCrop crop={tool === 'crop' ? crop : undefined} onChange={(_, percent) => setCrop(percent)} disabled={tool !== 'crop' || disabled} minWidth={8} minHeight={8} keepSelection style={{ display: source ? 'inline-block' : 'none' }}>

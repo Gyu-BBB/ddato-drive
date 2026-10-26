@@ -47,6 +47,24 @@ async function pinchImage(page, locator) {
 async function zoomScale(locator) {
   return locator.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).a);
 }
+
+async function checkCorrectionBrushes(page, editor, point, expected) {
+  const canvas = editor.locator('canvas');
+  for (const [tool, rgba] of [['지우개', [0, 0, 0, 0]], ['복원 브러시', expected]]) {
+    await editor.getByRole('button', { name: tool, exact: true }).click();
+    await editor.getByLabel('브러시 크기').fill('24');
+    const size = await canvas.evaluate(canvas => ({ width: canvas.width, height: canvas.height }));
+    const rect = await canvas.boundingBox();
+    await page.touchscreen.tap(rect.x + point.x / size.width * rect.width, rect.y + point.y / size.height * rect.height);
+    assert.deepEqual(await canvas.evaluate((canvas, point) => [...canvas.getContext('2d').getImageData(point.x, point.y, 1, 1).data], point), rgba, `${tool}: corrected source pixels must match`);
+  }
+  await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
+  assert.equal(await canvas.evaluate((canvas, point) => canvas.getContext('2d').getImageData(point.x, point.y, 1, 1).data[3], point), 0);
+  await editor.getByRole('button', { name: '다시 실행', exact: true }).click();
+  assert.deepEqual(await canvas.evaluate((canvas, point) => [...canvas.getContext('2d').getImageData(point.x, point.y, 1, 1).data], point), expected);
+  await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
+  await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
+}
 try {
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(`${base}/api/health`)).ok) break; } catch {}
@@ -197,6 +215,8 @@ try {
       await page.screenshot({ path: path.join(shots, `editor-zoom-${width}x${height}.png`) });
       await editor.getByRole('button', { name: '되돌리기', exact: true }).click();
       assert.equal(await editorCanvas.evaluate(canvas => canvas.toDataURL()), originalPixels);
+      await checkCorrectionBrushes(page, editor, { x: 1600, y: 200 }, [200, 200, 200, 255]);
+      assert.equal(await editorCanvas.evaluate(canvas => canvas.toDataURL()), originalPixels);
       await editor.getByRole('button', { name: '화면에 맞추기', exact: true }).click();
       await editor.getByRole('button', { name: '펜', exact: true }).click();
       await editor.getByRole('button', { name: '오른쪽으로 회전', exact: true }).click();
@@ -208,6 +228,8 @@ try {
       await editor.getByRole('button', { name: '확대', exact: true }).click();
       await editor.getByRole('button', { name: '자르기 적용', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('.image-editor canvas').width === 320 && document.querySelector('.image-editor canvas').height === 2560);
+      await checkCorrectionBrushes(page, editor, { x: 20, y: 40 }, [40, 120, 245, 255]);
+      await editor.getByRole('button', { name: '펜', exact: true }).click();
       const canvas = editor.locator('canvas');
       const rect = await canvas.boundingBox();
       assert(rect.width > 1 && rect.height > 20);

@@ -22,6 +22,7 @@
 .image-editor-stage { flex: 1; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #19191b; }
 .image-editor-stage { position: relative; }
 .image-editor-stage > .upload-spinner { position: absolute; z-index: 1; }
+.image-editor-brush-cursor { position: absolute; left: 0; top: 0; z-index: 2; border: 1px solid #fff; box-shadow: 0 0 0 1px #111; border-radius: 50%; pointer-events: none; }
 .image-editor-stage .ReactCrop { flex: none; max-width: none; }
 .image-editor-stage canvas { display: block; touch-action: none; }
 .image-editor-stage canvas {
@@ -54,4 +55,7 @@
   .image-editor-footer label { flex-basis: auto; }
   .image-editor-footer > button { flex-shrink: 0; }
   .image-editor-header, .image-editor-tools { padding-top: 4px; padding-bottom: 4px; }
+}
+@media (max-width: 480px) {
+  .image-editor-tools { display: grid; grid-template-columns: repeat(5, 36px); gap: 4px 8px; }
 }

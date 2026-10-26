@@ -1,13 +1,21 @@
+import { imageGeometry, paintImageBrush } from './imageBrushes.js';
+
 export const MAX_EDIT_PIXELS = 24_000_000;
 
 export function renderImageEdits(target, source, operations) {
   target.width = source.width;
   target.height = source.height;
-  let context = target.getContext('2d');
+  // Keep mask/brush rasterization stable across readback, export and history replay.
+  let context = target.getContext('2d', { willReadFrequently: true });
   context.drawImage(source, 0, 0);
-  for (const operation of operations) {
+  for (const [index, operation] of operations.entries()) {
     if (operation.type === 'pen') {
       paintStroke(context, operation);
+      continue;
+    }
+    if (operation.type === 'erase' || operation.type === 'restore') {
+      const transform = operation.type === 'restore' ? imageGeometry(source, operations.slice(0, index)).transform : null;
+      paintImageBrush(context, operation, source, transform);
       continue;
     }
     if (operation.type === 'mask') {
