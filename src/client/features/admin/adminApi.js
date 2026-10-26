@@ -1,6 +1,8 @@
 import { apiRequest } from "../../shared/api/apiClient.js";
 
 export const adminApi = {
+  integrity: () => apiRequest('/api/admin/integrity'),
+  startIntegrity: () => apiRequest('/api/admin/integrity', { method: 'POST' }),
   users: () => apiRequest("/api/admin/users"),
   storage: () => apiRequest("/api/admin/storage"),
   system: () => apiRequest("/api/admin/system"),

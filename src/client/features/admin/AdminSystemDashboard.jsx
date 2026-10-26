@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Button } from "../../shared/components/Button.jsx";
 import { ProgressBar } from "../../shared/components/ProgressBar.jsx";
 import { formatBytes, quotaPercent } from "../../shared/lib/formatBytes.js";
+import { AdminIntegrityPanel } from './AdminIntegrityPanel.jsx';
 
 export function AdminSystemDashboard({ system, onRefresh, onSaveDefaultQuota, busy = false }) {
   const [defaultQuotaMb, setDefaultQuotaMb] = useState("");
@@ -21,6 +22,7 @@ export function AdminSystemDashboard({ system, onRefresh, onSaveDefaultQuota, bu
 
   return (
     <section className="admin-dashboard">
+      <AdminIntegrityPanel />
       <StatusCard
         icon={HardDrive}
         title="프로젝트 디스크"

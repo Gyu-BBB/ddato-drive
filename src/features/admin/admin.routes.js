@@ -3,10 +3,20 @@ import { asyncRoute } from "../../core/http.js";
 import { auditLogger } from "../audit/AuditLogger.js";
 import { requireAdmin } from "../auth/auth.middleware.js";
 import { adminService } from "./AdminService.js";
+import { storageIntegrityService } from '../system/StorageIntegrityService.js';
 
 export const adminRouter = express.Router();
 
 adminRouter.use("/admin", requireAdmin);
+
+adminRouter.get('/admin/integrity', asyncRoute((_req, res) => {
+  res.json({ ok: true, report: storageIntegrityService.getStatus() });
+}));
+adminRouter.post('/admin/integrity', asyncRoute((req, res) => {
+  const report = storageIntegrityService.start();
+  auditLogger.record('admin.integrity.start', req, null);
+  res.status(202).json({ ok: true, report });
+}));
 
 adminRouter.get("/admin/users", asyncRoute((_req, res) => {
   res.json({ ok: true, users: adminService.listUsers() });
