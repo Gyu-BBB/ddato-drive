@@ -178,6 +178,38 @@ try {
   await until(async () => (await (await quotaContext.request.get(`${base}/api/files`)).json()).files.some(file => file.name === 'accepted.bin'), 'valid upload after admission failures');
   await quotaContext.close();
   console.log('Quota preflight passed: 10 GiB quota rejects 20 GiB metadata before any local file write or chunk; storage failures release reservations; valid files still upload.');
+
+  const sourceContext = await browser.newContext();
+  assert((await sourceContext.request.post(`${base}/api/auth/login`, { data: { id: 'admin', password: '123456' }, headers })).ok());
+  await sourceContext.addInitScript(() => {
+    navigator.storage.estimate = async () => ({ quota: 1024, usage: 0 });
+  });
+  const sourcePage = await sourceContext.newPage();
+  const sourcePath = path.join(root, 'reselect.bin'); fs.writeFileSync(sourcePath, contents);
+  let waitingForSource = false;
+  await sourcePage.route('**/upload-sessions/*/chunk', async route => {
+    if (Number(route.request().headers()['x-upload-offset']) > 0) { waitingForSource = true; await route.abort(); }
+    else await route.continue();
+  });
+  await sourcePage.goto(base);
+  await sourcePage.locator('input[type="file"]').first().setInputFiles(sourcePath);
+  await until(() => waitingForSource, 'first chunk committed before source reselection');
+  await sourcePage.getByRole('button', { name: 'reselect.bin 업로드 일시정지', exact: true }).click();
+  await sourcePage.getByText('1개 일시정지됨', { exact: true }).waitFor();
+  await sourcePage.reload();
+  await sourcePage.getByText('원본 파일 다시 선택', { exact: true }).waitFor();
+  await sourcePage.unroute('**/upload-sessions/*/chunk');
+  const resumedOffsets = [];
+  sourcePage.on('request', request => { if (request.url().endsWith('/chunk')) resumedOffsets.push(Number(request.headers()['x-upload-offset'])); });
+  const chooserEvent = sourcePage.waitForEvent('filechooser');
+  await sourcePage.getByRole('button', { name: 'reselect.bin 업로드 재개', exact: true }).click();
+  await (await chooserEvent).setFiles(sourcePath);
+  await sourcePage.getByText('1개 완료', { exact: true }).waitFor();
+  assert.equal(resumedOffsets[0], 8 * 1024 * 1024);
+  const reselected = (await listing()).find(file => file.name === 'reselect.bin');
+  assert.deepEqual(await (await api.get(`${base}/api/files/${reselected.id}/download`)).body(), contents);
+  await sourceContext.close();
+  console.log('Metadata-only recovery: pause, reload, reselect original, resume from 8 MiB and byte-exact download.');
 } finally {
   await browser?.close(); server.kill('SIGTERM');
   await new Promise(resolve => server.exitCode !== null ? resolve() : server.once('exit', resolve));

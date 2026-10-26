@@ -16,9 +16,10 @@ export async function getStoredUploads(accountId) {
 export async function saveStoredUpload(item) {
   await withStore("readwrite", async (store, files) => {
     const { file, ...metadata } = item;
-    if (file && !(await requestToPromise(files.getKey(item.id)))) {
+    if (file && item.persistenceMode !== 'reselect' && !(await requestToPromise(files.getKey(item.id)))) {
       await requestToPromise(files.put({ id: item.id, file }));
     }
+    if (item.persistenceMode === 'reselect') await requestToPromise(files.delete(item.id));
     await requestToPromise(store.put(metadata));
   });
   return item;

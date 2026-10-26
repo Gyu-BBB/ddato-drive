@@ -136,7 +136,7 @@ function summarizeUploads(uploads) {
       result.queued += 1;
     } else if (upload.status === "paused") {
       result.paused += 1;
-      result.canResume = result.canResume || !upload.transient;
+      result.canResume = result.canResume || (!upload.transient && Boolean(upload.file));
       result.canCancel = result.canCancel || !upload.transient;
     } else if (upload.status === "failed" || upload.status === "canceled") {
       result.failed += 1;
@@ -188,7 +188,7 @@ function rowActions(upload, actions) {
   if (upload.status === "paused") {
     return (
       <>
-        <button className="upload-action" type="button" onClick={() => actions.onResume(upload.id)} title="재개" aria-label={`${label} 업로드 재개`}>
+        <button className="upload-action" type="button" onClick={() => actions.onResume(upload.id)} title={upload.file ? '재개' : '원본 파일 다시 선택'} aria-label={`${label} 업로드 재개`}>
           <PlayCircle size={15} />
         </button>
         <button className="upload-action danger" type="button" onClick={() => actions.onCancel(upload.id)} title="취소" aria-label={`${label} 업로드 취소`}>

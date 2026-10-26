@@ -6,6 +6,7 @@ import { formatPercent } from "../../shared/lib/formatPercent.js";
 import { getStoredUploads, removeStoredUpload, saveStoredUpload } from "./uploadQueueStore.js";
 import { retryTransfer } from '../../shared/lib/retryTransfer.js';
 import { createTransferSlots } from '../../shared/lib/transferSlots.js';
+import { chooseUploadPersistence, selectUploadSource, sourceFingerprint, verifyUploadSource } from './uploadSource.js';
 
 const CHUNK_SIZE = 8 * 1024 * 1024;
 const MAX_CONCURRENT_UPLOADS = 10;
@@ -42,8 +43,9 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
     getStoredUploads(accountId).then(async (storedItems) => {
       if (disposed) return;
       const activeItems = storedItems
-        .filter((item) => item.file && item.status !== "done" && item.status !== "canceled")
+        .filter((item) => (item.file || item.persistenceMode === 'reselect') && item.status !== "done" && item.status !== "canceled")
         .map((item) => {
+          if (!item.file) return { ...item, status: 'paused', detail: '원본 파일 다시 선택', error: '' };
           if (RESUMABLE_STATUSES.has(item.status)) {
             return { ...item, status: "queued", detail: "재개 대기", error: "" };
           }
@@ -135,9 +137,19 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
     }
   }
 
-  function resumeUpload(id) {
-    const item = getVisibleItem(id);
+  async function resumeUpload(id) {
+    let item = getVisibleItem(id);
     if (!item || item.transient || controllersRef.current.has(id)) return;
+    if (!item.file) {
+      const lifecycle = lifecycleRef.current;
+      try {
+        const file = await selectUploadSource();
+        if (!file || lifecycle !== lifecycleRef.current || !getVisibleItem(id)) return;
+        await verifyUploadSource(item, file);
+        if (lifecycle !== lifecycleRef.current || !getVisibleItem(id)) return;
+        item = { ...item, file };
+      } catch (error) { updateVisibleOnly(id, { error: error.message }); return; }
+    }
     pausedIdsRef.current.delete(id);
     canceledIdsRef.current.delete(id);
     const next = { ...item, status: "queued", detail: "재개 대기", error: "", updatedAt: Date.now() };
@@ -164,7 +176,7 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
 
   function resumeAllUploads() {
     for (const item of uploadsRef.current) {
-      if (item.transient) continue;
+      if (item.transient || !item.file) continue;
       if (RESTARTABLE_STATUSES.has(item.status)) resumeUpload(item.id);
     }
   }
@@ -207,7 +219,13 @@ export function usePersistentUploadQueue({ accountId = "", enabled = true, onCom
       const session = await retryTransfer(() => prepareSession(item, controller.signal), retryOptions);
       item = { ...item, serverSessionId: session.id };
       if (controller.signal.aborted) throw new DOMException('Upload interrupted', 'AbortError');
+      if (!item.persistenceMode) {
+        item.persistenceMode = await chooseUploadPersistence(item.file);
+        if (item.persistenceMode === 'reselect') item.sourceFingerprint = await sourceFingerprint(item.file);
+      }
       item = await updateStoredAndVisible(item.id, {
+        persistenceMode: item.persistenceMode,
+        sourceFingerprint: item.sourceFingerprint || '',
         status: "queued",
         serverSessionId: session.id,
         uploadedBytes: session.uploadedBytes,
