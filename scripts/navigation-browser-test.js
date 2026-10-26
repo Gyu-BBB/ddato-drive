@@ -103,6 +103,7 @@ try {
   }
   await page.goto(base);
   await page.getByRole('button', { name: '아이콘 보기', exact: true }).click();
+  await item(rootFile).locator('.document-thumbnail img').waitFor();
   const previewRequests = [];
   const countPreview = request => { if (new URL(request.url()).pathname.endsWith('/preview')) previewRequests.push(request.url()); };
   page.on('request', countPreview);
