@@ -4,6 +4,7 @@
   "description": "Self-hosted web drive backend for DDATO Drive",
   "type": "module",
   "scripts": {
+    "test:ssh": "npm run build && node scripts/ssh-transfer-test.js",
     "test:download-refresh": "npm run build && node scripts/download-refresh-browser-test.js",
     "test:drive-improvements": "npm run build && node --disable-warning=ExperimentalWarning scripts/storage-integrity-test.js && node scripts/large-upload-storage-test.js && node --disable-warning=ExperimentalWarning scripts/upload-conflict-test.js && node --disable-warning=ExperimentalWarning scripts/share-management-test.js && node --disable-warning=ExperimentalWarning scripts/storage-insights-test.js && node --disable-warning=ExperimentalWarning scripts/photo-processing-test.js && node scripts/management-browser-test.js && node scripts/photo-browser-test.js",
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
@@ -35,6 +36,7 @@
     "exifr": "^7.1.3",
     "express": "^5.3.0",
     "heic-to": "^1.6.6",
+    "ipaddr.js": "^2.3.0",
     "lucide-react": "^1.21.0",
     "multer": "^2.5.0",
     "onnxruntime-web": "1.21.0",
@@ -45,6 +47,7 @@
     "react-image-crop": "^11.1.2",
     "react-router": "^7.18.4",
     "react-zoom-pan-pinch": "^4.2.0",
+    "ssh2": "1.17.0",
     "yauzl": "^3.4.0"
   },
   "engines": {

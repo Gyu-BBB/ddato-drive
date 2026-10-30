@@ -261,6 +261,28 @@ This is a self-hosted application. Before exposing it publicly:
 - Use file/note/share passwords for sensitive items.
 - Back up `DDATO_DRIVE_DATA_DIR`, especially `drive.sqlite` and `storage/`.
 
+## SSH Transfers
+
+The SSH transfer page provides both an account-isolated SFTP server (compatible
+with modern OpenSSH scp's default SFTP transport) and a web remote-SFTP client.
+The inbound server is disabled until an administrator starts it; default port
+2222 is separate from HTTPS. No OS shell, system SSH service, legacy `scp -O`,
+port forwarding or symlink access is enabled. Google users issue a dedicated,
+hashed, revocable 30-day transfer password in the web UI.
+
+Web remote connections require an explicitly supplied SHA256 host-key fingerprint;
+credentials are not saved. Private/loopback targets require explicit administrator
+consent. Destination DNS is pinned to the resolved IP. Transfers stream with
+backpressure, enforce local quota and file protection, stage before finalization,
+and continue independently of page reload. Remote files are never overwritten.
+Remote disconnection can leave a remote `.part` file if cleanup cannot reach the
+server. Web remote jobs and connections are memory-only and do not resume after
+server restart. See [the connection and operations guide](public/ssh-transfer-guide.md)
+for exact compatibility, folder-transfer behavior and network requirements.
+
+Run `npm run test:ssh` for isolated real SFTP, system scp, web transfer, permission,
+host-pinning, quota and desktop/mobile tests. The CLI tests require OpenSSH 9+.
+
 ## Local Server Resource Policy
 
 - Account upload concurrency remains 10, with request admission before body parsing. Downloads are handed directly to the browser's download manager; its concurrency settings apply. Ordinary file downloads remain streamed.

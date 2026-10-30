@@ -1,4 +1,5 @@
-import { FileText, Folder, HardDrive, Images, Link, LogOut, PieChart, Shield, Trash2, UserRound } from "lucide-react";
+import { FileText, Folder, HardDrive, Images, Link, LogOut, PieChart, Shield, Terminal, Trash2, UserRound } from "lucide-react";
+import { SshTransferPage } from '../features/ssh/SshTransferPage.jsx';
 import { StorageUsagePage } from '../features/files/StorageUsagePage.jsx';
 import { SharedLinksPage } from '../features/files/SharedLinksPage.jsx';
 import { useState } from "react";
@@ -93,6 +94,7 @@ function AppFrame() {
           </button>
           <button data-section="shared" className={view === 'shared' ? 'nav-item active' : 'nav-item'} onClick={() => goPage('/shared')} title="공유 링크" aria-label="공유 링크"><Link size={18} /></button>
           <button data-section="storage" className={view === 'storage' ? 'nav-item active' : 'nav-item'} onClick={() => goPage('/storage')} title="저장 공간" aria-label="저장 공간"><PieChart size={18} /></button>
+          <button data-section="ssh" className={view === 'ssh' ? 'nav-item active' : 'nav-item'} onClick={() => goPage('/ssh')} title="SSH 전송" aria-label="SSH 전송"><Terminal size={18} /></button>
           {isAdmin && (
             <button data-section="admin" className={view === "admin" ? "nav-item active" : "nav-item"} onClick={() => goPage("/admin")} title="관리" aria-label="관리">
               <Shield size={18} />
@@ -109,7 +111,7 @@ function AppFrame() {
       </aside>
 
       <section className="workspace">
-        {view === 'storage' ? <StorageUsagePage /> : view === 'shared' ? <SharedLinksPage /> : view === "admin" && isAdmin
+        {view === 'ssh' ? <SshTransferPage /> : view === 'storage' ? <StorageUsagePage /> : view === 'shared' ? <SharedLinksPage /> : view === "admin" && isAdmin
           ? <AdminPage />
           : view === "trash"
             ? <DriveRoute key="trash" trashMode ownerLabel="휴지통" />

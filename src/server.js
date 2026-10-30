@@ -14,8 +14,12 @@ import { trashCleanupService } from "./features/files/TrashCleanupService.js";
 import { healthRouter } from "./features/health/health.routes.js";
 import { notesRouter } from "./features/notes/note.routes.js";
 import { shareRouter } from "./features/shares/share.routes.js";
+import { sshRouter } from './features/ssh/ssh.routes.js';
+import { driveSshServer } from './features/ssh/DriveSshServer.js';
+import { remoteTransferService } from './features/ssh/RemoteTransferService.js';
 
 initializeDatabase();
+await driveSshServer.initialize();
 
 const clientDistDir = path.join(config.projectRoot, "dist");
 const clientIndexFile = path.join(clientDistDir, "index.html");
@@ -57,6 +61,7 @@ app.use("/api", filesRouter);
 app.use("/api", notesRouter);
 app.use("/api", shareRouter);
 app.use("/api", adminRouter);
+app.use('/api', sshRouter);
 
 app.get("/service-worker.js", (_req, res) => {
   res
@@ -148,7 +153,10 @@ const server = app.listen(config.port, config.host, () => {
 
 trashCleanupService.start();
 
-function shutdown() {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return; shuttingDown = true;
+  await Promise.all([driveSshServer.stop(), remoteTransferService.stop()]);
   server.close(async () => {
     await trashCleanupService.stop();
     closeDatabase();
