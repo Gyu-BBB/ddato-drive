@@ -20,7 +20,18 @@ export function clearDownloads() {
 }
 export function cancelDownload(id) { controllers.get(id)?.abort(); }
 
+// Native attachment downloads belong to the browser, not this page's lifetime.
 export async function startDownload(url, name, { method = 'GET', body } = {}) {
+  const id = typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID()
+    : `download-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  transfers = [...transfers, { id, name, status: 'browser', uploadedBytes: 0, sizeBytes: null, speedBytes: 0, progress: 0 }];
+  listeners.forEach(listener => listener());
+  try { browserDownload(url, name, method, body, id); }
+  catch (error) { update(id, { status: 'failed', error: error.message }); }
+}
+
+// Kept for stream-level regression tests; product downloads use native handoff.
+export async function startPageDownload(url, name, { method = 'GET', body } = {}) {
   // This local progress ID must also work on LAN HTTP, where randomUUID is unavailable.
   const id = typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()
@@ -129,27 +140,27 @@ export async function startDownload(url, name, { method = 'GET', body } = {}) {
 }
 
 function browserDownload(url, name, method, body, id) {
+  if (method !== 'GET' && (method !== 'POST' || !Array.isArray(body?.ids))) throw new Error('이 브라우저에서 다운로드를 시작하지 못했습니다.');
+  const frame = document.createElement('iframe');
+  frame.name = id; frame.hidden = true; frame.title = '브라우저 다운로드';
+  frame.onload = () => {
+    try {
+      const error = JSON.parse(frame.contentDocument.body.textContent);
+      if (error.ok === false) update(id, { status: 'failed', error: formatApiErrorMessage(error.error, error.details) });
+    } catch {}
+  };
+  document.body.append(frame);
   if (method === 'GET') {
     const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = name;
+    anchor.href = url; anchor.download = name; anchor.target = id;
     document.body.append(anchor); anchor.click(); anchor.remove();
     return;
   }
-  if (method !== 'POST' || !Array.isArray(body?.ids)) throw new Error('이 브라우저에서 대용량 다운로드를 시작하지 못했습니다.');
-  const frame = document.createElement('iframe');
-  frame.name = id; frame.hidden = true; frame.title = '브라우저 다운로드';
   const form = document.createElement('form');
   form.method = 'POST'; form.action = url; form.target = id; form.hidden = true;
   for (const value of body.ids) {
     const input = document.createElement('input');
     input.type = 'hidden'; input.name = 'ids'; input.value = value; form.append(input);
   }
-  frame.onload = () => {
-    // Attachment downloads do not load a document; JSON error responses do.
-    try {
-      const error = JSON.parse(frame.contentDocument.body.textContent);
-      if (error.ok === false) update(id, { status: 'failed', error: formatApiErrorMessage(error.error, error.details) });
-    } catch {}
-  };
-  document.body.append(frame, form); form.submit(); form.remove();
+  document.body.append(form); form.submit(); form.remove();
 }

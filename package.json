@@ -4,6 +4,7 @@
   "description": "Self-hosted web drive backend for DDATO Drive",
   "type": "module",
   "scripts": {
+    "test:download-refresh": "npm run build && node scripts/download-refresh-browser-test.js",
     "test:drive-improvements": "npm run build && node --disable-warning=ExperimentalWarning scripts/storage-integrity-test.js && node scripts/large-upload-storage-test.js && node --disable-warning=ExperimentalWarning scripts/upload-conflict-test.js && node --disable-warning=ExperimentalWarning scripts/share-management-test.js && node --disable-warning=ExperimentalWarning scripts/storage-insights-test.js && node --disable-warning=ExperimentalWarning scripts/photo-processing-test.js && node scripts/management-browser-test.js && node scripts/photo-browser-test.js",
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
     "prebuild": "node scripts/prepare-background-assets.js",

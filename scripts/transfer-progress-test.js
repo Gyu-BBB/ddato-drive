@@ -23,7 +23,7 @@ console.log('Transfer ETA passed: individual/queued totals, stale speed, unknown
 for (const [value, expected] of [[0, '0.00%'], [12.3456789, '12.35%'], [12.3, '12.30%'], [99.999, '100.00%'], [100, '100.00%'], [-1, '0.00%'], [NaN, '0.00%'], [Infinity, '0.00%']]) {
   assert.equal(formatPercent(value), expected);
 }
-import { startDownload, getDownloads, subscribeDownloads, clearDownloads, cancelDownload } from '../src/client/features/files/downloadTransfers.js';
+import { startDownload as startNativeDownload, startPageDownload as startDownload, getDownloads, subscribeDownloads, clearDownloads, cancelDownload } from '../src/client/features/files/downloadTransfers.js';
 import { downloadPickerOptions } from '../src/client/features/files/downloadFilename.js';
 
 for (const [name, extension] of [
@@ -211,7 +211,15 @@ assert.equal(getDownloads().at(-1).status, 'browser');
 assert.deepEqual(nativeStarts, [{ tag: 'a', url: '/large-native' }, { tag: 'form', url: '/api/files/download', ids: ['one', 'two'] }]);
 assert.equal(canceledBodies, 2);
 clearDownloads();
-console.log('Download reliability passed: truncated-file rejection, ten active transfers, queued cancellation/clearing and memory-safe native large-file/ZIP handoff.');
+globalThis.fetch = async () => { throw new Error('Native downloads must not use page-owned fetch'); };
+await startNativeDownload('/native-direct', 'direct.bin');
+assert.equal(getDownloads().at(-1).status, 'browser');
+await startNativeDownload('/api/files/download', 'native.zip', { method: 'POST', body: { ids: ['one', 'two'] } });
+assert.equal(getDownloads().at(-1).status, 'browser');
+await startNativeDownload('/invalid', 'invalid.bin', { method: 'DELETE' });
+assert.equal(getDownloads().at(-1).status, 'failed');
+clearDownloads();
+console.log('Download reliability passed: legacy stream checks and direct native GET/ZIP handoff without page-owned fetch.');
 const { retryTransfer } = await import('../src/client/shared/lib/retryTransfer.js');
 let attempts = 0;
 const retryEvents = [];

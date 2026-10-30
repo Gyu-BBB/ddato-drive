@@ -77,11 +77,11 @@ export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, 
         </div>
       </div>
 
-      <div className="transfer-summary transfer-metrics">
+      {downloading && uploads.every(upload => upload.status === 'browser' || upload.status === 'failed') ? null : <div className="transfer-summary transfer-metrics">
         {formatBytes(totals.loaded)} / {totals.unknown ? "크기 확인 중" : formatBytes(totals.size)}
         {summary.active ? ` · ${formatBytes(totals.speed)}/s` : ""}
         {summary.active ? <span className="transfer-eta">전체 {remainingTransfersLabel(uploads, clock)}</span> : null}
-      </div>
+      </div>}
 
       {collapsed && summary.active ? (
         <div className="upload-card-mini-progress" aria-hidden="true">
@@ -98,7 +98,7 @@ export function UploadQueue({ uploads, direction = "upload", onCancel, onPause, 
                 <span>
                   <strong>{upload.name || upload.displayName}</strong>
                   <span>{upload.error || (downloading ? uploadLabel(upload).replace("업로드됨", "다운로드됨") : upload.detail || uploadLabel(upload))}</span>
-                  <span className="transfer-metrics">{formatBytes(Number(upload.uploadedBytes) || (upload.status === "done" ? upload.sizeBytes : 0))} / {upload.sizeBytes == null ? "크기 확인 중" : formatBytes(upload.sizeBytes)}{upload.status === "uploading" ? ` · ${formatBytes(currentTransferSpeed(upload, clock))}/s` : ""}</span>
+                  {upload.status !== 'browser' ? <span className="transfer-metrics">{formatBytes(Number(upload.uploadedBytes) || (upload.status === "done" ? upload.sizeBytes : 0))} / {upload.sizeBytes == null ? "크기 확인 중" : formatBytes(upload.sizeBytes)}{upload.status === "uploading" ? ` · ${formatBytes(currentTransferSpeed(upload, clock))}/s` : ""}</span> : null}
                   {upload.status === "uploading" ? <span className="transfer-eta">{formatRemainingTime(estimateRemainingSeconds(upload.sizeBytes, upload.uploadedBytes, currentTransferSpeed(upload, clock)))}</span> : null}
                 </span>
               </div>
